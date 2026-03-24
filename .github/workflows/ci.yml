@@ -35,7 +35,7 @@ jobs:
           fi
 
       - name: Run vulnerability check
-        run: go install github.com/golang/vuln/cmd/govulncheck@latest && govulncheck ./...
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
 
       - name: Verify go.mod tidiness
         run: |
