@@ -1,7 +1,7 @@
 # Go Api Template
 
 Template for building a REST API in Go with a clean architecture, configuration management, logging, and observability.
-
+test
 
 ##So far
 * Create a simple HTTP server that listens for incoming requests and responds with a message.
