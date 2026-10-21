@@ -1,6 +1,13 @@
 {
   "cSpell.words": [
+    "distroless",
+    "goreleaser",
+    "govulncheck",
+    "livez",
     "martinezsaweczko",
-    "otelgrpc"
+    "otelgrpc",
+    "otelhttp",
+    "readyz",
+    "slog"
   ]
 }
