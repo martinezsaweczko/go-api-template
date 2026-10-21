@@ -100,6 +100,7 @@ func (v *VersionHandler) getVersion(w http.ResponseWriter, r *http.Request) {
 			metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/version", v.basePath))),
 		)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
 	v.handlerCalls.Add(r.Context(), 1, metric.WithAttributes(
 		attribute.String("method", "GET")),

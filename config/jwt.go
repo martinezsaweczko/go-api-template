@@ -6,6 +6,14 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"time"
+)
+
+const (
+	// DefaultJWTIssuer is the issuer set on and required from tokens when none is configured.
+	DefaultJWTIssuer = "go-api-template"
+	// DefaultJWTTokenTTL is the lifetime of issued tokens when none is configured.
+	DefaultJWTTokenTTL = time.Hour
 )
 
 type JWTConfig struct {
@@ -13,6 +21,15 @@ type JWTConfig struct {
 	PrivateKeyPath string
 	PublicKey      *rsa.PublicKey
 	PrivateKey     *rsa.PrivateKey
+	// Issuer is set on issued tokens and required on verified tokens.
+	Issuer string
+	// Audience, when non-empty, is set on issued tokens and required on verified tokens.
+	Audience string
+	// TokenTTL is the lifetime of issued tokens.
+	TokenTTL time.Duration
+	// DevTokenEndpoint enables the unauthenticated token minting endpoint.
+	// Development only: never enable it in production.
+	DevTokenEndpoint bool
 }
 
 func (j *JWTConfig) validate() error {
@@ -21,6 +38,9 @@ func (j *JWTConfig) validate() error {
 	}
 	if j.PrivateKeyPath == "" {
 		return fmt.Errorf("JWT private key path cannot be empty")
+	}
+	if j.TokenTTL <= 0 {
+		return fmt.Errorf("JWT token TTL must be positive")
 	}
 
 	// Verify files exist

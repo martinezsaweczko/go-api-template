@@ -43,7 +43,8 @@ func AuthorizationMiddleware(log *slog.Logger, jwtService *services.JWTService) 
 			}
 
 			// Log successful authorization
-			log.Debug("Token verified successfully", "path", r.RequestURI, "method", r.Method, "subject", claims.Subject)
+			subject, _ := claims.GetSubject()
+			log.Debug("Token verified successfully", "path", r.RequestURI, "method", r.Method, "subject", subject)
 
 			// Call the next handler
 			next.ServeHTTP(w, r)

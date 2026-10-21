@@ -2,8 +2,10 @@ package http_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -24,6 +26,7 @@ type HTTPServer struct {
 	httpServer *http.Server
 	mux        *http.ServeMux
 	log        *slog.Logger
+	errs       chan error
 }
 
 // New creates a new HTTP server on the specified port
@@ -40,21 +43,37 @@ func (h *HTTPServerConfig) New() *HTTPServer {
 			WriteTimeout: time.Duration(h.WriteTimeout) * time.Second,
 			IdleTimeout:  time.Duration(h.Timeout) * time.Second,
 		},
-		log: h.Log,
+		log:  h.Log,
+		errs: make(chan error, 1),
 	}
 }
 
-// Start starts the HTTP server
+// Start binds the listen address synchronously, so errors such as a port
+// already in use are returned to the caller, and then serves requests in the
+// background. A fatal error from the serve loop is reported on Errors().
 func (s *HTTPServer) Start() error {
 	s.log.Info("Starting HTTP server", "address", s.httpServer.Addr, "timeout", s.httpServer.IdleTimeout, "read_timeout", s.httpServer.ReadTimeout, "write_timeout", s.httpServer.WriteTimeout)
+
+	ln, err := net.Listen("tcp", s.httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", s.httpServer.Addr, err)
+	}
+
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.log.Error("Server error", "error", err)
+			s.errs <- err
 		}
 	}()
 
-	s.log.Info("HTTP server started", "address", s.httpServer.Addr, "timeout", s.httpServer.IdleTimeout, "read_timeout", s.httpServer.ReadTimeout, "write_timeout", s.httpServer.WriteTimeout)
+	s.log.Info("HTTP server started", "address", ln.Addr().String())
 	return nil
+}
+
+// Errors returns a channel that receives a fatal error from the serve loop.
+// It never receives http.ErrServerClosed.
+func (s *HTTPServer) Errors() <-chan error {
+	return s.errs
 }
 
 // Stop gracefully shuts down the server with context timeout

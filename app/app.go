@@ -15,12 +15,16 @@ import (
 	"github.com/martinezsaweczko/go-api-template/http/middleware"
 	"github.com/martinezsaweczko/go-api-template/model"
 	"github.com/martinezsaweczko/go-api-template/o11"
+	"github.com/martinezsaweczko/go-api-template/services"
 )
 
 // Server defines the interface for any HTTP server implementation
 // This interface is defined in the consumer (app) package
 type Server interface {
+	// Start binds the listener synchronously, returning any listen error, and serves in the background.
 	Start() error
+	// Errors reports a fatal error from the background serve loop.
+	Errors() <-chan error
 	Stop(ctx context.Context) error
 	Handle(pattern string, handler http.Handler)
 	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
@@ -44,6 +48,7 @@ type App struct {
 	log           *slog.Logger
 	observability *o11.ObservabilityInst
 	handlers      *Handlers
+	jwtService    *services.JWTService
 	buildInfo     model.BuildInfo
 	basePath      string
 }
@@ -99,17 +104,22 @@ func (app *App) Run() error {
 	}
 	app.registerRoutes()
 
-	if err := app.server.Start(); err != nil {
-		return err
-	}
-
-	// Setup signal handling for graceful shutdown
+	// Setup signal handling for graceful shutdown before starting to serve
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
-	// Wait for termination signal
-	sig := <-sigChan
-	app.log.Info("Received shutdown signal", "signal", sig)
+	if err := app.server.Start(); err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	// Wait for a termination signal or a fatal server error
+	select {
+	case sig := <-sigChan:
+		app.log.Info("Received shutdown signal", "signal", sig)
+	case err := <-app.server.Errors():
+		return fmt.Errorf("server error: %w", err)
+	}
 
 	// Perform graceful shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(app.ctx, 30*time.Second)

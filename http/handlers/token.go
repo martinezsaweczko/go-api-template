@@ -64,8 +64,8 @@ func (t *TokenHandler) RegisterRoutes(router Router, middlewares ...middleware.M
 
 // Create JWT token
 //
-//	@Summary      Create JWT token
-//	@Description  Generate a new JWT token with the given subject
+//	@Summary      Create JWT token (development only)
+//	@Description  Mint a JWT for the given subject without authentication. Development only: the route is registered only when the -jwt-dev-token-endpoint flag is enabled and must never be enabled in production.
 //	@Tags         auth
 //	@Accept       json
 //	@Produce      json
