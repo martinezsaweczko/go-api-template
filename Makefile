@@ -9,7 +9,12 @@ LDFLAGS := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.ap
 GOLANGCI_LINT_VERSION ?= v2.15.0
 
 # goreleaser version used when the binary is not installed.
+# Keep in line with the goreleaser-action version in .github/workflows/release.yml.
 GORELEASER_VERSION ?= v2.18.3
+
+# govulncheck version used when the binary is not installed.
+# Keep in line with GOVULNCHECK_VERSION in .github/workflows/ci.yml.
+GOVULNCHECK_VERSION ?= v1.9.0
 
 # Set FORCE=1 to overwrite existing signing keys with `make keys`.
 FORCE ?= 0
@@ -62,9 +67,13 @@ release-check:
 		go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check; \
 	fi
 
-## vulncheck: scan dependencies for known vulnerabilities
+## vulncheck: scan dependencies for known vulnerabilities (the installed binary, or the pinned version via go run)
 vulncheck:
-	govulncheck ./...
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
+	else \
+		go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...; \
+	fi
 
 ## swagger: regenerate the OpenAPI docs in docs/
 swagger:

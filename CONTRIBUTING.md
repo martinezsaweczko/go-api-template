@@ -25,6 +25,7 @@ Thanks for helping improve this template. This guide gets you from clone to pull
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `build:`, `ci:`, `chore:`). The release changelog is generated from them.
 - **Tests:** keep tests in the same commit as the behavior they cover.
 - **Checks:** run `make check lint test` before pushing. CI runs the same checks plus `govulncheck`, a swagger drift check and a Docker build.
+- **Release config:** when you change `.goreleaser.yaml`, run `make release-check` (it falls back to `go run`, which needs network).
 - **Pull requests:** fill in the template and link the related issue.
 
 ## Adding an endpoint

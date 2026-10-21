@@ -83,17 +83,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify go.mod and go.sum are tidy
-        run: go mod tidy -diff
+      # Module tidiness is checked by `make check` in the lint job.
       - name: Install swag
         run: go install "github.com/swaggo/swag/cmd/swag@${SWAG_VERSION}"
       - name: Verify swagger docs are up to date
         run: |
           make swagger
-          git diff --exit-code -- docs/ || {
+          # Fails on modified tracked files and on new untracked files in docs/.
+          if ! git diff --exit-code -- docs/ || [ -n "$(git status --porcelain -- docs/)" ]; then
+            git status --short -- docs/
             echo "::error::docs/ is out of date. Run 'make swagger' and commit the result."
             exit 1
-          }
+          fi
       - name: Build
         run: go build ./...
 
