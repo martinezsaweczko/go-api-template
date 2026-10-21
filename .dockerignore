@@ -1,0 +1,29 @@
+# Version control and tooling
+.git
+.github
+.vscode
+.idea
+.atl
+odd
+
+# Build output and local artefacts
+build
+*.exe
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Secrets: signing keys and env files are mounted at runtime, never copied
+keys
+.env
+*.pem
+
+# Documentation not needed to build (docs/ is kept: it is compiled in)
+*.md
+LICENSE
+
+# Docker files themselves
+Dockerfile
+.dockerignore

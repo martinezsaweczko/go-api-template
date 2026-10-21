@@ -11,7 +11,7 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 # Set FORCE=1 to overwrite existing signing keys with `make keys`.
 FORCE ?= 0
 
-.PHONY: all build run test check fmt lint vulncheck swagger clean clean-swagger keys clean-keys
+.PHONY: all build run test check fmt lint vulncheck swagger docker-build clean clean-swagger keys clean-keys
 
 all: check test build
 
@@ -58,6 +58,10 @@ vulncheck:
 ## swagger: regenerate the OpenAPI docs in docs/
 swagger:
 	swag init -g cmd/api/main.go -o docs
+
+## docker-build: build the container image tagged $(APP_NAME):$(VERSION)
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) --build-arg BUILD_TIME=$(BUILD_TIME) -t $(APP_NAME):$(VERSION) .
 
 ## clean: remove build artifacts
 clean:
