@@ -40,11 +40,11 @@ func (m *MetricsHandlerConfig) NewMetricsHandler() *MetricsHandler {
 // Register the routes for the metrics handler
 func (m *MetricsHandler) RegisterRoutes(router Router, handler http.Handler, middlewares ...middleware.Middleware) {
 	// Register the metrics handler route
-	if m.cfg.O11.PrometheusPath != "" {
+	if m.cfg.Observability.MetricsPath != "" {
 		if len(middlewares) > 0 {
-			router.HandleWithMiddleware(m.cfg.O11.PrometheusPath, handler, middlewares...)
+			router.HandleWithMiddleware(m.cfg.Observability.MetricsPath, handler, middlewares...)
 		} else {
-			router.Handle(m.cfg.O11.PrometheusPath, handler)
+			router.Handle(m.cfg.Observability.MetricsPath, handler)
 		}
 	}
 }

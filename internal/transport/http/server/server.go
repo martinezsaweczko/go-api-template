@@ -1,3 +1,5 @@
+// Package server wraps net/http.Server with synchronous listen errors, a
+// global middleware chain and graceful shutdown.
 package server
 
 import (
@@ -7,57 +9,72 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
-// Server wraps the standard net/http server implementation
+// HTTPServerConfig configures an HTTPServer. Port 0 binds an ephemeral port.
 type HTTPServerConfig struct {
-	Addr         string
-	Port         int
-	Timeout      int
-	ReadTimeout  int
-	WriteTimeout int
-	Log          *slog.Logger
+	Address           string
+	Port              int
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	Log               *slog.Logger
 }
 
+// HTTPServer serves a ServeMux wrapped by a global middleware chain.
 type HTTPServer struct {
-	httpServer *http.Server
-	mux        *http.ServeMux
-	log        *slog.Logger
-	errs       chan error
+	httpServer  *http.Server
+	mux         *http.ServeMux
+	middlewares []middleware.Middleware
+	log         *slog.Logger
+	errs        chan error
+
+	mu       sync.Mutex
+	listener net.Listener
 }
 
-// New creates a new HTTP server on the specified port
+// New creates a new HTTP server for the configured address and port.
 func (h *HTTPServerConfig) New() *HTTPServer {
-	addr := fmt.Sprintf("%s:%d", h.Addr, h.Port)
-	mux := http.NewServeMux()
-
 	return &HTTPServer{
-		mux: mux,
+		mux: http.NewServeMux(),
 		httpServer: &http.Server{
-			Addr:         addr,
-			Handler:      mux,
-			ReadTimeout:  time.Duration(h.ReadTimeout) * time.Second,
-			WriteTimeout: time.Duration(h.WriteTimeout) * time.Second,
-			IdleTimeout:  time.Duration(h.Timeout) * time.Second,
+			Addr:              net.JoinHostPort(h.Address, strconv.Itoa(h.Port)),
+			ReadHeaderTimeout: h.ReadHeaderTimeout,
+			ReadTimeout:       h.ReadTimeout,
+			WriteTimeout:      h.WriteTimeout,
+			IdleTimeout:       h.IdleTimeout,
+			ErrorLog:          slog.NewLogLogger(h.Log.Handler(), slog.LevelWarn),
 		},
 		log:  h.Log,
 		errs: make(chan error, 1),
 	}
 }
 
+// Use appends middlewares to the global chain wrapping every route, including
+// unmatched requests. The first middleware is the outermost. Call it before Start.
+func (s *HTTPServer) Use(middlewares ...middleware.Middleware) {
+	s.middlewares = append(s.middlewares, middlewares...)
+}
+
 // Start binds the listen address synchronously, so errors such as a port
 // already in use are returned to the caller, and then serves requests in the
 // background. A fatal error from the serve loop is reported on Errors().
 func (s *HTTPServer) Start() error {
-	s.log.Info("Starting HTTP server", "address", s.httpServer.Addr, "timeout", s.httpServer.IdleTimeout, "read_timeout", s.httpServer.ReadTimeout, "write_timeout", s.httpServer.WriteTimeout)
+	s.httpServer.Handler = middleware.Chain(s.mux, s.middlewares...)
 
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.httpServer.Addr, err)
 	}
+	s.mu.Lock()
+	s.listener = ln
+	s.mu.Unlock()
 
 	go func() {
 		if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -66,8 +83,25 @@ func (s *HTTPServer) Start() error {
 		}
 	}()
 
-	s.log.Info("HTTP server started", "address", ln.Addr().String())
+	s.log.Info("HTTP server started",
+		"address", ln.Addr().String(),
+		"read_header_timeout", s.httpServer.ReadHeaderTimeout,
+		"read_timeout", s.httpServer.ReadTimeout,
+		"write_timeout", s.httpServer.WriteTimeout,
+		"idle_timeout", s.httpServer.IdleTimeout,
+	)
 	return nil
+}
+
+// Addr returns the address the server is bound to, or nil before Start.
+// With port 0 it reports the actual ephemeral port.
+func (s *HTTPServer) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
 }
 
 // Errors returns a channel that receives a fatal error from the serve loop.
@@ -76,40 +110,29 @@ func (s *HTTPServer) Errors() <-chan error {
 	return s.errs
 }
 
-// Stop gracefully shuts down the server with context timeout
+// Stop gracefully shuts down the server, waiting for in-flight requests until ctx expires.
 func (s *HTTPServer) Stop(ctx context.Context) error {
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
-	}
-	return nil
+	return s.httpServer.Shutdown(ctx)
 }
 
-// Handle implements the Server interface for routing
+// Handle registers a handler for the pattern.
 func (s *HTTPServer) Handle(pattern string, handler http.Handler) {
-	if mux, ok := s.httpServer.Handler.(*http.ServeMux); ok {
-		mux.Handle(pattern, handler)
-	}
+	s.mux.Handle(pattern, handler)
 }
 
-// HandleFunc implements the Server interface for routing functions
+// HandleFunc registers a handler function for the pattern.
 func (s *HTTPServer) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	if mux, ok := s.httpServer.Handler.(*http.ServeMux); ok {
-		mux.HandleFunc(pattern, handler)
-	}
+	s.mux.HandleFunc(pattern, handler)
 }
 
-// HandleWithMiddleware registers a handler with specific middleware
-// The middleware will be applied in order (first to last)
-// Example: server.HandleWithMiddleware("/api/users", handler, loggingMiddleware, authMiddleware)
+// HandleWithMiddleware registers a handler wrapped by route-specific
+// middleware (first is outermost), inside the global chain.
 func (s *HTTPServer) HandleWithMiddleware(pattern string, handler http.Handler, middlewares ...middleware.Middleware) {
-	wrapped := middleware.Chain(handler, middlewares...)
-	s.Handle(pattern, wrapped)
+	s.Handle(pattern, middleware.Chain(handler, middlewares...))
 }
 
-// HandleFuncWithMiddleware registers a handler function with specific middleware
-// The middleware will be applied in order (first to last)
-// Example: server.HandleFuncWithMiddleware("/api/version", versionHandler, loggingMiddleware)
+// HandleFuncWithMiddleware registers a handler function wrapped by
+// route-specific middleware (first is outermost), inside the global chain.
 func (s *HTTPServer) HandleFuncWithMiddleware(pattern string, handler func(http.ResponseWriter, *http.Request), middlewares ...middleware.Middleware) {
-	wrapped := middleware.Chain(http.HandlerFunc(handler), middlewares...)
-	s.Handle(pattern, wrapped)
+	s.Handle(pattern, middleware.Chain(http.HandlerFunc(handler), middlewares...))
 }

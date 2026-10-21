@@ -7,7 +7,6 @@ package main
 // @license.name  MIT
 // @license.url   https://opensource.org/licenses/MIT
 
-// @host      localhost:8080
 // @BasePath  /api/v1
 
 // @securityDefinitions.apiKey Bearer
@@ -16,11 +15,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
-
-	"github.com/gofrs/uuid"
+	"os/signal"
+	"syscall"
 
 	"github.com/martinezsaweczko/go-api-template/docs"
 	"github.com/martinezsaweczko/go-api-template/internal/app"
@@ -37,69 +38,81 @@ var (
 	appName   string
 )
 
+const basePath = "/api/v1"
+
 func main() {
+	os.Exit(run())
+}
 
-	// Create context for the application
-	ctx := context.Background()
-	// Create an instance of the application
-	cfg, err := config.LoadConfig()
+// run wires and runs the application and returns the process exit code, so
+// deferred cleanups run before main exits.
+func run() int {
+	cfg, err := config.Load(os.Args[1:], os.Getenv)
+	if errors.Is(err, flag.ErrHelp) {
+		config.Usage(os.Stdout)
+		return 0
+	}
 	if err != nil {
-		fmt.Printf("Configuration error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		return 1
 	}
 
-	// Create logger with config options
-	file, errFile := config.LogFilePath(cfg.Log.FilePath)
-	if errFile != nil {
-		fmt.Printf("Error opening log file: %v\n", errFile)
-		os.Exit(1)
+	out, closeLog, err := config.OpenLogOutput(cfg.Log.FilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		return 1
 	}
+	defer closeLog()
 
-	defer file.Close()
+	log := slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: config.ParseLogLevel(cfg.Log.Level)}))
 
-	logLevel := config.ParseLogLevel(cfg.Log.Level)
-	log := slog.New(slog.NewTextHandler(file, &slog.HandlerOptions{Level: logLevel}))
+	log.Info("Build info", "version", version, "build_time", buildTime, "app_name", appName)
+	log.Info("Configuration loaded",
+		"address", cfg.Server.Address,
+		"port", cfg.Server.Port,
+		"shutdown_timeout", cfg.Server.ShutdownTimeout,
+		"max_body_bytes", cfg.Server.MaxBodyBytes,
+		"cors_allowed_origins", cfg.Server.CORSAllowedOrigins,
+		"log_level", cfg.Log.Level,
+		"log_file_path", cfg.Log.FilePath,
+		"metrics_path", cfg.Observability.MetricsPath,
+		"otel_endpoint", cfg.Observability.OTLPEndpoint,
+	)
 
-	// Group execution UUID for all logs in this run
-	executionID, _ := uuid.NewV4()
-	log = log.With("execution_id", executionID)
+	// SIGINT and SIGTERM cancel ctx, which starts a graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	httpConf := &server.HTTPServerConfig{
-		Addr:         cfg.HttpServer.Address,
-		Port:         cfg.HttpServer.Port,
-		Timeout:      cfg.HttpServer.Timeout,
-		ReadTimeout:  cfg.HttpServer.ReadTimeout,
-		WriteTimeout: cfg.HttpServer.WriteTimeout,
-		Log:          log,
+	otelShutdown, observabilityInst, err := observability.SetupOTelSDK(ctx, &cfg.Observability)
+	if err != nil {
+		log.Error("OpenTelemetry setup error", "error", err)
+		return 1
 	}
+	defer func() {
+		// ctx is cancelled by now, so flushing telemetry gets its own deadline.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			log.Error("OpenTelemetry shutdown error", "error", err)
+		}
+	}()
 
-	// Print build info and configuration details to the log
-	log.Info("Build Info information", "version", version, "build_time", buildTime, "app_name", appName)
-	log.Info("Configuration loaded", "http_address", httpConf.Addr, "http_port", httpConf.Port, "http_timeout", httpConf.Timeout, "http_read_timeout", httpConf.ReadTimeout, "http_write_timeout", httpConf.WriteTimeout, "log_level", cfg.Log.Level, "log_file_path", cfg.Log.FilePath)
+	// Leave Host empty so Swagger UI targets the host serving the page,
+	// instead of the bind address (0.0.0.0 is not reachable from a browser).
+	docs.SwaggerInfo.Host = ""
+	docs.SwaggerInfo.BasePath = basePath
 
-	// Set up OpenTelemetry providers.
-	otelShutdown, observabilityInst, otelErr := observability.SetupOTelSDK(ctx, &cfg.O11)
-	if otelErr != nil {
-		log.Error("OpenTelemetry setup error", "error", otelErr)
-		os.Exit(1)
-	}
+	httpServer := (&server.HTTPServerConfig{
+		Address:           cfg.Server.Address,
+		Port:              cfg.Server.Port,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		Log:               log,
+	}).New()
 
-	defer otelShutdown(ctx)
-
-	// Set programatically swagger info
-	// programmatically set swagger info
-	docs.SwaggerInfo.Title = "Go Api Template"
-	docs.SwaggerInfo.Description = "Template API"
-	docs.SwaggerInfo.Version = "1.0"
-	docs.SwaggerInfo.Host = fmt.Sprintf("%s:%d", httpConf.Addr, httpConf.Port)
-	docs.SwaggerInfo.BasePath = "/api/v1"
-	docs.SwaggerInfo.Schemes = []string{"http", "https"}
-
-	//httpServer is an implementation of the Server interface defined in the app package
-	httpServer := httpConf.New()
-
-	// Build app with all dependencies injected
-	app := app.NewApp(cfg).
+	application := app.NewApp(cfg).
 		WithServer(httpServer).
 		WithLog(log).
 		WithObservability(&observabilityInst).
@@ -108,14 +121,13 @@ func main() {
 			BuildTime: buildTime,
 			AppName:   appName,
 		}).
-		WithBasePath("/api/v1")
+		WithBasePath(basePath)
 
-	// Run the application
-	errApp := app.Run()
-	if errApp != nil {
-		log.Error("Application error", "error", errApp)
-		os.Exit(1)
+	if err := application.Run(ctx); err != nil {
+		log.Error("Application error", "error", err)
+		return 1
 	}
 
 	log.Info("Application terminated")
+	return 0
 }

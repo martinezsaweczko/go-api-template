@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,7 @@ func (t *TokenHandler) RegisterRoutes(router Router, middlewares ...middleware.M
 //	@Param        request body model.TokenRequest true "Token request"
 //	@Success      200  {object}  model.TokenResponse
 //	@Failure      400  {object}  model.ErrorResponse
+//	@Failure      413  {object}  model.ErrorResponse
 //	@Failure      500  {object}  model.ErrorResponse
 //	@Router       /token [post]
 func (t *TokenHandler) createToken(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +98,17 @@ func (t *TokenHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	var req model.TokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		t.log.Warn("Failed to decode token request", "error", err.Error())
+		status, message := http.StatusBadRequest, "invalid request body"
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			status, message = http.StatusRequestEntityTooLarge, "request body too large"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(model.ErrorResponse{Error: "invalid request body"})
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(model.ErrorResponse{Error: message})
 		t.handlerCalls.Add(r.Context(), 1,
 			metric.WithAttributes(attribute.String("method", r.Method)),
-			metric.WithAttributes(attribute.Int("http_code", http.StatusBadRequest)),
+			metric.WithAttributes(attribute.Int("http_code", status)),
 			metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/token", t.basePath))),
 		)
 		return

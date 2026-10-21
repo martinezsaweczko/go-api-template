@@ -13,6 +13,7 @@ import (
 	"github.com/martinezsaweczko/go-api-template/internal/model"
 	"github.com/martinezsaweczko/go-api-template/internal/service"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 func newTestJWTService(t *testing.T) *service.JWTService {
@@ -117,5 +118,30 @@ func TestTokenHandler_RejectsOtherMethods(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, testBasePath+"/token", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestTokenHandler_RejectsOversizedBody(t *testing.T) {
+	obs, _ := newTestObservability(t)
+	cfg := handlers.TokenHandlerConfig{
+		Log:           discardLogger(),
+		Observability: obs,
+		JWTService:    newTestJWTService(t),
+		BasePath:      testBasePath,
+	}
+	h, err := cfg.NewTokenHandler()
+	if err != nil {
+		t.Fatalf("NewTokenHandler: %v", err)
+	}
+	router := newTestRouter()
+	h.RegisterRoutes(router)
+	limited := middleware.BodyLimit(16)(router)
+
+	body := `{"subject":"` + strings.Repeat("a", 64) + `"}`
+	rec := httptest.NewRecorder()
+	limited.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, testBasePath+"/token", strings.NewReader(body)))
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
 	}
 }

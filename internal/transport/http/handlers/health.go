@@ -21,6 +21,9 @@ type HealthHandlerConfig struct {
 	Observability *observability.ObservabilityInst
 	Cfg           *config.Config
 	BasePath      string
+	// Ready reports whether the application is ready to receive traffic.
+	// Nil means always ready.
+	Ready func() bool
 }
 
 // HealthHandler handles health check requests
@@ -30,6 +33,7 @@ type HealthHandler struct {
 	cfg           *config.Config
 	handlerCalls  metric.Int64Counter
 	basePath      string
+	ready         func() bool
 }
 
 // NewHealthHandler creates a new health handler
@@ -40,23 +44,62 @@ func (h *HealthHandlerConfig) NewHealthHandler() (*HealthHandler, error) {
 		return nil, err
 	}
 
+	ready := h.Ready
+	if ready == nil {
+		ready = func() bool { return true }
+	}
+
 	return &HealthHandler{
 		log:           h.Log,
 		observability: h.Observability,
 		cfg:           h.Cfg,
 		handlerCalls:  handlerCalls,
 		basePath:      h.BasePath,
+		ready:         ready,
 	}, nil
 }
 
-// RegisterRoutes registers the health handler route
+// Probe paths served outside the API base path.
+const (
+	LivenessPath  = "/livez"
+	ReadinessPath = "/readyz"
+)
+
+// RegisterRoutes registers the liveness and readiness probes and the legacy
+// health route under the base path.
 func (h *HealthHandler) RegisterRoutes(router Router, middlewares ...middleware.Middleware) {
-	path := fmt.Sprintf("%s/health", h.basePath)
-	if len(middlewares) > 0 {
-		router.HandleFuncWithMiddleware("GET "+path, h.getHealth, middlewares...)
-	} else {
-		router.HandleFunc("GET "+path, h.getHealth)
+	routes := map[string]func(http.ResponseWriter, *http.Request){
+		"GET " + LivenessPath:                    h.livez,
+		"GET " + ReadinessPath:                   h.readyz,
+		fmt.Sprintf("GET %s/health", h.basePath): h.getHealth,
 	}
+	for pattern, fn := range routes {
+		if len(middlewares) > 0 {
+			router.HandleFuncWithMiddleware(pattern, fn, middlewares...)
+		} else {
+			router.HandleFunc(pattern, fn)
+		}
+	}
+}
+
+// livez reports that the process is serving requests.
+func (h *HealthHandler) livez(w http.ResponseWriter, _ *http.Request) {
+	writeStatus(w, http.StatusOK, "ok")
+}
+
+// readyz reports whether the application is ready to receive traffic.
+func (h *HealthHandler) readyz(w http.ResponseWriter, _ *http.Request) {
+	if !h.ready() {
+		writeStatus(w, http.StatusServiceUnavailable, "not ready")
+		return
+	}
+	writeStatus(w, http.StatusOK, "ready")
+}
+
+func writeStatus(w http.ResponseWriter, code int, status string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(model.OKResponse{Status: status})
 }
 
 // Get health status
@@ -70,7 +113,7 @@ func (h *HealthHandler) RegisterRoutes(router Router, middlewares ...middleware.
 //	@Failure      500  {object}  model.HTTPError
 //	@Router       /health [get]
 func (h *HealthHandler) getHealth(w http.ResponseWriter, r *http.Request) {
-	h.log.Info("Received request for health status")
+	h.log.Debug("Received request for health status")
 
 	_, span := h.observability.Trace.Tracer("health_handler").Start(r.Context(), "getHealthHandler")
 	defer span.End()

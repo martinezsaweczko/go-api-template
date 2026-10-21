@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -8,46 +9,45 @@ import (
 	"github.com/martinezsaweczko/go-api-template/internal/service"
 )
 
+type claimsKey struct{}
+
+// ClaimsFromContext returns the JWT claims validated by AuthorizationMiddleware.
+func ClaimsFromContext(ctx context.Context) (*service.Claims, bool) {
+	claims, ok := ctx.Value(claimsKey{}).(*service.Claims)
+	return claims, ok && claims != nil
+}
+
 // AuthorizationMiddleware creates a middleware that verifies JWT tokens from the Authorization header
 // The token should be in the format: Authorization: Bearer <token>
+// Validated claims are stored in the request context; read them with ClaimsFromContext.
 func AuthorizationMiddleware(log *slog.Logger, jwtService *service.JWTService) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get the Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				log.Warn("Missing authorization header", "path", r.RequestURI, "method", r.Method)
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"error": "missing authorization header"}`))
+				log.Warn("Missing authorization header", "path", r.URL.Path, "method", r.Method)
+				writeJSONError(w, http.StatusUnauthorized, "missing authorization header")
 				return
 			}
 
-			// Extract the token from the Authorization header
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				log.Warn("Invalid authorization header format", "path", r.RequestURI, "method", r.Method)
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"error": "invalid authorization header format"}`))
+			scheme, tokenString, ok := strings.Cut(authHeader, " ")
+			if !ok || scheme != "Bearer" || tokenString == "" {
+				log.Warn("Invalid authorization header format", "path", r.URL.Path, "method", r.Method)
+				writeJSONError(w, http.StatusUnauthorized, "invalid authorization header format")
 				return
 			}
 
-			tokenString := parts[1]
-
-			// Verify the token
 			claims, err := jwtService.VerifyToken(tokenString)
 			if err != nil {
-				log.Warn("Invalid token", "path", r.RequestURI, "method", r.Method, "error", err.Error())
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"error": "invalid token"}`))
+				log.Warn("Invalid token", "path", r.URL.Path, "method", r.Method, "error", err.Error())
+				writeJSONError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
-			// Log successful authorization
 			subject, _ := claims.GetSubject()
-			log.Debug("Token verified successfully", "path", r.RequestURI, "method", r.Method, "subject", subject)
+			log.Debug("Token verified successfully", "path", r.URL.Path, "method", r.Method, "subject", subject)
 
-			// Call the next handler
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey{}, claims)))
 		})
 	}
 }

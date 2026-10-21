@@ -26,7 +26,7 @@ type ObservabilityInst struct {
 
 // SetupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func SetupOTelSDK(ctx context.Context, config *config.O11Config) (func(context.Context) error, ObservabilityInst, error) {
+func SetupOTelSDK(ctx context.Context, config *config.ObservabilityConfig) (func(context.Context) error, ObservabilityInst, error) {
 	var shutdownFuncs []func(context.Context) error
 	var err error
 
@@ -54,8 +54,8 @@ func SetupOTelSDK(ctx context.Context, config *config.O11Config) (func(context.C
 	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
-	if config.TracerEndpoint != "" {
-		tracerProvider, err := newTracerProvider(ctx, config.TracerEndpoint)
+	if config.OTLPEndpoint != "" {
+		tracerProvider, err := newTracerProvider(ctx, config.OTLPEndpoint)
 		if err != nil {
 			handleErr(err)
 			return shutdown, observabilityInst, err
@@ -71,7 +71,7 @@ func SetupOTelSDK(ctx context.Context, config *config.O11Config) (func(context.C
 
 	// Set up meter provider.
 	// If no Prometheus path is provided, we can skip setting up the meter provider, as the application currently doesn't use it for anything else.
-	if config.PrometheusPath != "" {
+	if config.MetricsPath != "" {
 		meterProvider, err := newMeterProvider()
 		if err != nil {
 			handleErr(err)

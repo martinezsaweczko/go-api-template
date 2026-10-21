@@ -1,19 +1,32 @@
+// Package config loads the application configuration from command-line flags
+// and APP_-prefixed environment variables.
+//
+// Every flag has a matching environment variable: the flag name upper-cased,
+// with dashes replaced by underscores and the APP_ prefix added (for example
+// -jwt-token-ttl is APP_JWT_TOKEN_TTL). Precedence is flag > environment >
+// default. An empty environment variable counts as unset.
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"strings"
-	"time"
 )
 
+// EnvPrefix is prepended to every environment variable name.
+const EnvPrefix = "APP_"
+
+// Config is the complete application configuration.
 type Config struct {
-	HttpServer ServerConfig
-	Log        LogConfig
-	O11        O11Config
-	JWT        JWTConfig
+	Server        ServerConfig
+	Log           LogConfig
+	Observability ObservabilityConfig
+	JWT           JWTConfig
 }
 
+// ConfigError aggregates every validation error found while loading.
 type ConfigError struct {
 	Message        string
 	AppendedErrors []error
@@ -34,109 +47,123 @@ func (ce *ConfigError) Error() string {
 	return fmt.Sprintf("%s:\n  - %s", ce.Message, strings.Join(errMessages, "\n  - "))
 }
 
-// Load configuration from file or environment variables
-// Parse for stdin
-// Return the configuration struct
-func LoadConfig() (*Config, *ConfigError) {
-	config := &Config{}
-	// Initialize HttpServerConfig fields
-	config.HttpServer = ServerConfig{}
-	listErrors := []error{}
+// Unwrap exposes the individual validation errors to errors.Is and errors.As.
+func (ce *ConfigError) Unwrap() []error {
+	return ce.AppendedErrors
+}
 
-	// Define command-line flags for HTTP server configuration
-	var serverAddress string
-	var serverPort int
-	var serverTimeout int
-	var serverReadTimeout int
-	var serverWriteTimeout int
+// EnvName returns the environment variable that sets the given flag.
+func EnvName(flagName string) string {
+	return EnvPrefix + strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))
+}
 
-	// Define command-line flags for LOG configuration
-	var logLevel string
-	var logFilePath string
+// newFlagSet declares every setting, with its default, bound to cfg.
+func newFlagSet(cfg *Config) *flag.FlagSet {
+	fs := flag.NewFlagSet("api", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 
-	// Define command-line flags for O11 configuration
-	var o11TracerEndpoint string
-	var o11PrometheusPath string
+	// HTTP server
+	fs.StringVar(&cfg.Server.Address, "address", DefaultAddress, "HTTP listen address")
+	fs.IntVar(&cfg.Server.Port, "port", DefaultPort, "HTTP listen port")
+	fs.DurationVar(&cfg.Server.ReadHeaderTimeout, "read-header-timeout", DefaultReadHeaderTimeout, "Maximum time to read request headers")
+	fs.DurationVar(&cfg.Server.ReadTimeout, "read-timeout", DefaultReadTimeout, "Maximum time to read the whole request (0 disables)")
+	fs.DurationVar(&cfg.Server.WriteTimeout, "write-timeout", DefaultWriteTimeout, "Maximum time to write the response (0 disables)")
+	fs.DurationVar(&cfg.Server.IdleTimeout, "idle-timeout", DefaultIdleTimeout, "Keep-alive idle timeout (0 uses the read timeout)")
+	fs.DurationVar(&cfg.Server.ShutdownTimeout, "shutdown-timeout", DefaultShutdownTimeout, "Graceful shutdown deadline")
+	fs.Int64Var(&cfg.Server.MaxBodyBytes, "max-body-bytes", DefaultMaxBodyBytes, "Maximum request body size in bytes")
+	fs.Func("cors-allowed-origins", "Comma-separated CORS allowed origins, or * (empty disables CORS)", func(v string) error {
+		cfg.Server.CORSAllowedOrigins = splitList(v)
+		return nil
+	})
 
-	// Define command-line flags for JWT configuration
-	var jwtPublicKeyPath string
-	var jwtPrivateKeyPath string
-	var jwtIssuer string
-	var jwtAudience string
-	var jwtTokenTTL time.Duration
-	var jwtDevTokenEndpoint bool
+	// Logging
+	fs.StringVar(&cfg.Log.Level, "log-level", DefaultLogLevel, "Log level (debug, info, warn, error)")
+	fs.StringVar(&cfg.Log.FilePath, "log-file-path", LogStdout, `Log file path, or "stdout"`)
 
-	// Flags server
-	flag.StringVar(&serverAddress, "http-address", "localhost", "HTTP server address")
-	flag.IntVar(&serverPort, "http-port", 8080, "HTTP server port")
-	flag.IntVar(&serverTimeout, "http-timeout", 30, "HTTP server timeout in seconds")
-	flag.IntVar(&serverReadTimeout, "http-read-timeout", 10, "HTTP server read timeout in seconds")
-	flag.IntVar(&serverWriteTimeout, "http-write-timeout", 10, "HTTP server write timeout in seconds")
+	// Observability
+	fs.StringVar(&cfg.Observability.ServiceName, "service-name", DefaultServiceName, "service.name reported in traces and metrics")
+	fs.StringVar(&cfg.Observability.OTLPEndpoint, "otel-endpoint", "", "OTLP gRPC trace endpoint as host:port (empty disables tracing export)")
+	fs.StringVar(&cfg.Observability.MetricsPath, "metrics-path", DefaultMetricsPath, "Prometheus metrics path (empty disables metrics)")
 
-	// Flags log
-	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	flag.StringVar(&logFilePath, "log-file-path", "stdout", "Log file path (default is stdout)")
+	// JWT
+	fs.StringVar(&cfg.JWT.PublicKeyPath, "jwt-public-key-path", "keys/public.pem", "Path to the JWT RSA public key")
+	fs.StringVar(&cfg.JWT.PrivateKeyPath, "jwt-private-key-path", "keys/private.pem", "Path to the JWT RSA private key")
+	fs.StringVar(&cfg.JWT.Issuer, "jwt-issuer", DefaultJWTIssuer, "JWT issuer set on and required from tokens")
+	fs.StringVar(&cfg.JWT.Audience, "jwt-audience", "", "JWT audience set on and required from tokens (empty disables the audience check)")
+	fs.DurationVar(&cfg.JWT.TokenTTL, "jwt-token-ttl", DefaultJWTTokenTTL, "Lifetime of issued JWT tokens")
+	fs.BoolVar(&cfg.JWT.DevTokenEndpoint, "jwt-dev-token-endpoint", false, "Enable the unauthenticated POST /token endpoint (development only)")
 
-	//O11 flags
-	flag.StringVar(&o11TracerEndpoint, "o11-tracer-endpoint", "", "OpenTelemetry tracer endpoint (gRPC, without http:// or https://)")
-	flag.StringVar(&o11PrometheusPath, "o11-prometheus-path", "", "OpenTelemetry Prometheus metrics path (default is /metrics)")
+	return fs
+}
 
-	// JWT flags
-	flag.StringVar(&jwtPublicKeyPath, "jwt-public-key-path", "keys/public.pem", "Path to JWT public key file")
-	flag.StringVar(&jwtPrivateKeyPath, "jwt-private-key-path", "keys/private.pem", "Path to JWT private key file")
-	flag.StringVar(&jwtIssuer, "jwt-issuer", DefaultJWTIssuer, "JWT issuer set on and required from tokens")
-	flag.StringVar(&jwtAudience, "jwt-audience", "", "JWT audience set on and required from tokens (empty disables the audience check)")
-	flag.DurationVar(&jwtTokenTTL, "jwt-token-ttl", DefaultJWTTokenTTL, "Lifetime of issued JWT tokens")
-	flag.BoolVar(&jwtDevTokenEndpoint, "jwt-dev-token-endpoint", false, "Enable the unauthenticated POST /token endpoint (development only)")
+// Load builds the configuration from defaults, then the environment read
+// through getenv, then args (typically os.Args[1:]), and validates it.
+// It returns flag.ErrHelp when help was requested.
+func Load(args []string, getenv func(string) string) (*Config, error) {
+	cfg := &Config{}
+	fs := newFlagSet(cfg)
 
-	flag.Parse()
+	var errs []error
+	fs.VisitAll(func(f *flag.Flag) {
+		name := EnvName(f.Name)
+		v := getenv(name)
+		if v == "" {
+			return
+		}
+		if err := fs.Set(f.Name, v); err != nil {
+			errs = append(errs, fmt.Errorf("invalid value %q for %s: %w", v, name, err))
+		}
+	})
 
-	config.HttpServer.Address = serverAddress
-	config.HttpServer.Port = serverPort
-	config.HttpServer.Timeout = serverTimeout
-	config.HttpServer.ReadTimeout = serverReadTimeout
-	config.HttpServer.WriteTimeout = serverWriteTimeout
-
-	if err := config.HttpServer.validate(); err != nil {
-		listErrors = append(listErrors, err)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil, err
+		}
+		return nil, &ConfigError{Message: "Invalid configuration", AppendedErrors: []error{err}}
+	}
+	if fs.NArg() > 0 {
+		errs = append(errs, fmt.Errorf("unexpected argument %q", fs.Arg(0)))
 	}
 
-	config.Log.Level = logLevel
-	config.Log.FilePath = logFilePath
-
-	if err := config.Log.validate(); err != nil {
-		listErrors = append(listErrors, err)
+	if err := cfg.Server.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cfg.Log.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cfg.Observability.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cfg.JWT.LoadKeys(); err != nil {
+		errs = append(errs, err)
 	}
 
-	// Set O11 configuration
-	o11Conf := &O11Config{
-		TracerEndpoint: o11TracerEndpoint,
-		PrometheusPath: o11PrometheusPath,
+	if len(errs) > 0 {
+		return nil, &ConfigError{Message: "Invalid configuration", AppendedErrors: errs}
 	}
+	return cfg, nil
+}
 
-	config.O11 = *o11Conf
+// Usage writes every flag with its environment variable and default to w.
+func Usage(w io.Writer) {
+	fs := newFlagSet(&Config{})
+	fmt.Fprintf(w, "Usage: api [flags]\n\nEvery flag can also be set through its environment variable (flag > env > default).\n\n")
+	fs.VisitAll(func(f *flag.Flag) {
+		fmt.Fprintf(w, "  -%s (env %s)\n    \t%s", f.Name, EnvName(f.Name), f.Usage)
+		if f.DefValue != "" {
+			fmt.Fprintf(w, " (default %q)", f.DefValue)
+		}
+		fmt.Fprintln(w)
+	})
+}
 
-	if err := o11Conf.Validate(); err != nil {
-		listErrors = append(listErrors, err)
+// splitList splits a comma-separated list, trimming spaces and dropping empty items.
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
 	}
-
-	// Set JWT configuration
-	config.JWT = JWTConfig{
-		PublicKeyPath:    jwtPublicKeyPath,
-		PrivateKeyPath:   jwtPrivateKeyPath,
-		Issuer:           jwtIssuer,
-		Audience:         jwtAudience,
-		TokenTTL:         jwtTokenTTL,
-		DevTokenEndpoint: jwtDevTokenEndpoint,
-	}
-
-	if err := config.JWT.LoadKeys(); err != nil {
-		listErrors = append(listErrors, err)
-	}
-
-	if len(listErrors) > 0 {
-		return nil, &ConfigError{Message: "Invalid configuration", AppendedErrors: listErrors}
-	}
-
-	return config, nil
+	return out
 }

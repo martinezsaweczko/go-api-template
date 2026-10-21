@@ -54,6 +54,7 @@ func (app *App) initHandlers() error {
 		Observability: app.observability,
 		Cfg:           app.config,
 		BasePath:      app.basePath,
+		Ready:         app.Ready,
 	}
 	app.handlers.healthHandler, err = healthHandlerConf.NewHealthHandler()
 	if err != nil {
@@ -107,36 +108,49 @@ func (app *App) initHandlers() error {
 	return nil
 }
 
-// registerRoutes registers all HTTP routes to the server's mux with appropriate middleware
+// registerRoutes installs the global middleware chain and registers all routes
 func (app *App) registerRoutes() {
-	// Define middleware chains for different endpoints
-	loggingMiddleware := middleware.LoggingMiddleware(app.log)
+	metricsPath := app.config.Observability.MetricsPath
+
+	// Probes and metrics scrapes are logged at Debug to keep the logs readable.
+	quietPaths := []string{handlers.LivenessPath, handlers.ReadinessPath, app.basePath + "/health"}
+	if metricsPath != "" {
+		quietPaths = append(quietPaths, metricsPath)
+	}
+
+	// Global chain, outermost first: every request (including unmatched
+	// routes) gets a request ID, an access log entry, panic recovery, CORS
+	// and a body size limit.
+	app.server.Use(
+		middleware.RequestID,
+		middleware.Logging(app.log, quietPaths...),
+		middleware.Recovery(app.log),
+		middleware.CORS(app.config.Server.CORSAllowedOrigins),
+		middleware.BodyLimit(app.config.Server.MaxBodyBytes),
+	)
 
 	// Create authorization middleware for protected endpoints
 	authorizationMiddleware := middleware.AuthorizationMiddleware(app.log, app.jwtService)
 
-	// Register metrics handler (no middleware)
-	if app.config.O11.PrometheusPath != "" {
-		app.log.Info("Registering metrics handler", "path", app.config.O11.PrometheusPath)
+	if metricsPath != "" {
+		app.log.Info("Registering metrics handler", "path", metricsPath)
 		app.handlers.metricsHandler.RegisterRoutes(app.server, promhttp.Handler())
 	}
 
-	// Register health handler (no middleware)
+	// Liveness, readiness and legacy health routes
 	app.handlers.healthHandler.RegisterRoutes(app.server)
 
-	// Register version handler with logging middleware
-	app.handlers.versionHandler.RegisterRoutes(app.server, loggingMiddleware)
+	app.handlers.versionHandler.RegisterRoutes(app.server)
 
 	// Register the unauthenticated token handler only when explicitly enabled for development
 	if app.handlers.tokenHandler != nil {
 		app.log.Warn("Development token endpoint enabled: anyone can mint tokens; never enable it in production",
 			"path", app.basePath+"/token")
-		app.handlers.tokenHandler.RegisterRoutes(app.server, loggingMiddleware)
+		app.handlers.tokenHandler.RegisterRoutes(app.server)
 	}
 
-	// Register dummy business logic handler with logging and authorization middleware
-	app.handlers.dummyBusinessLogicHandler.RegisterRoutes(app.server, loggingMiddleware, authorizationMiddleware)
+	// Protected routes add the authorization middleware on top of the global chain
+	app.handlers.dummyBusinessLogicHandler.RegisterRoutes(app.server, authorizationMiddleware)
 
-	// Register swagger handler (no middleware)
 	app.handlers.swaggerHandler.RegisterRoutes(app.server, httpSwagger.WrapHandler)
 }

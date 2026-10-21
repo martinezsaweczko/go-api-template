@@ -2,14 +2,23 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
+const (
+	// LogStdout is the log file path sentinel that selects standard output.
+	LogStdout = "stdout"
+	// DefaultLogLevel is the log level used when none is configured.
+	DefaultLogLevel = "info"
+)
+
+// LogConfig configures the application logger.
 type LogConfig struct {
-	Level    string
+	Level string
+	// FilePath is a file to append logs to, or LogStdout.
 	FilePath string
 }
 
@@ -21,19 +30,20 @@ func (l *LogConfig) validate() error {
 		"error": true,
 	}
 	if !validLevels[l.Level] {
-		return fmt.Errorf("invalid log level: %s", l.Level)
+		return fmt.Errorf("invalid log level: %q", l.Level)
 	}
 
-	// If file path is provided, we could add additional validation here (e.g., check if the directory exists)
-
-	filePath := strings.TrimSpace(l.FilePath)
-	if filePath != "" {
-		dir := filepath.Dir(filePath)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			return fmt.Errorf("log file directory does not exist: %s", dir)
-		}
+	switch l.FilePath {
+	case "":
+		return fmt.Errorf("log file path cannot be empty: use %q or a file path", LogStdout)
+	case LogStdout:
+		return nil
 	}
 
+	dir := filepath.Dir(l.FilePath)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("log file directory does not exist: %s", dir)
+	}
 	return nil
 }
 
@@ -53,10 +63,16 @@ func ParseLogLevel(level string) slog.Level {
 	}
 }
 
-// LogFilePath opens the log file for writing, or returns stdout if "stdout" is specified
-func LogFilePath(filePath string) (*os.File, error) {
-	if filePath == "stdout" {
-		return os.Stdout, nil
+// OpenLogOutput returns the writer for the configured log destination and a
+// function that releases it. LogStdout selects os.Stdout, which the returned
+// close function leaves open. Log files are created with 0600 permissions.
+func OpenLogOutput(filePath string) (io.Writer, func() error, error) {
+	if filePath == LogStdout {
+		return os.Stdout, func() error { return nil }, nil
 	}
-	return os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, f.Close, nil
 }
