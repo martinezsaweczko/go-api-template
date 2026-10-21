@@ -21,7 +21,39 @@ if [[ "$module" != "$TEMPLATE_MODULE" ]]; then
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/init-test.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+
+# cleanup removes the scratch tree without ever changing the exit status: under
+# `set -e` a failing command in an EXIT trap would turn a passing run into a
+# failing one. The harness starts no background processes, but late writers
+# (such as a detached `git maintenance`) can race `rm -rf`, so it retries and
+# only warns when the tree cannot be removed.
+cleanup() {
+	local rc=$? attempt
+	trap - EXIT
+	set +e
+	for attempt in 1 2 3 4 5; do
+		chmod -R u+w "$work" 2>/dev/null
+		rm -rf "$work" 2>/dev/null
+		[[ -e "$work" ]] || break
+		sleep 1
+	done
+	if [[ -e "$work" ]]; then
+		printf 'warning: could not remove %s after %d attempts\n' "$work" "$attempt" >&2
+	fi
+	exit "$rc"
+}
+trap cleanup EXIT
+
+# Commands such as `git commit` may start auto maintenance, which detaches into
+# the background by default (maintenance.autoDetach / gc.autoDetach) and can
+# keep writing lock files into the throwaway repositories while they are being
+# removed. Disable it for every git call made here and by init.sh, preserving
+# any GIT_CONFIG_* entries already in the environment.
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_${git_config_count}=maintenance.auto" "GIT_CONFIG_VALUE_${git_config_count}=false"
+git_config_count=$((git_config_count + 1))
+export "GIT_CONFIG_KEY_${git_config_count}=gc.auto" "GIT_CONFIG_VALUE_${git_config_count}=0"
+export GIT_CONFIG_COUNT=$((git_config_count + 1))
 
 failures=0
 passes=0
