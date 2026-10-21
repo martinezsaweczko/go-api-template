@@ -15,8 +15,10 @@
 # HTTP client. Orchestrators should probe GET /livez (liveness) and
 # GET /readyz (readiness) instead.
 
-# Keep in line with the go directive in go.mod.
-ARG GO_VERSION=1.26
+# Keep in line with the go directive in go.mod and .go-version. Pinned to the
+# exact patch: the golang image sets GOTOOLCHAIN=local, so a cached floating
+# 1.26 tag older than the go directive would fail the build.
+ARG GO_VERSION=1.26.10
 
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src
