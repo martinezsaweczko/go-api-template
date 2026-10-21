@@ -75,6 +75,7 @@ func run() int {
 		"cors_allowed_origins", cfg.Server.CORSAllowedOrigins,
 		"log_level", cfg.Log.Level,
 		"log_file_path", cfg.Log.FilePath,
+		"service_name", cfg.Observability.ServiceName,
 		"metrics_path", cfg.Observability.MetricsPath,
 		"otel_endpoint", cfg.Observability.OTLPEndpoint,
 	)
@@ -83,7 +84,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	otelShutdown, observabilityInst, err := observability.SetupOTelSDK(ctx, &cfg.Observability)
+	otelShutdown, observabilityInst, err := observability.SetupOTelSDK(ctx, &cfg.Observability, version)
 	if err != nil {
 		log.Error("OpenTelemetry setup error", "error", err)
 		return 1

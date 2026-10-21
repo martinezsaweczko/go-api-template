@@ -110,7 +110,9 @@ func (app *App) Run(ctx context.Context) error {
 	if err := app.initHandlers(); err != nil {
 		return fmt.Errorf("failed to initialize handlers: %w", err)
 	}
-	app.registerRoutes()
+	if err := app.registerRoutes(); err != nil {
+		return err
+	}
 
 	if err := app.server.Start(); err != nil {
 		return fmt.Errorf("failed to start server: %w", err)

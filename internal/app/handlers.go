@@ -26,18 +26,12 @@ func (app *App) initHandlers() error {
 	app.handlers.metricsHandler = metricsHandlerConf.NewMetricsHandler()
 
 	// Initialize version handler
-	versionHandlerConf := handlers.VersionHandlerConfig{
-		Log:           app.log,
-		Observability: app.observability,
-		Cfg:           app.config,
-		AppBuildInfo:  app.buildInfo,
-		BasePath:      app.basePath,
-	}
-	app.handlers.versionHandler, err = versionHandlerConf.NewVersionHandler()
-	if err != nil {
-		app.log.Error("Failed to initialize version handler", "error", err)
-		return err
-	}
+	app.handlers.versionHandler = (&handlers.VersionHandlerConfig{
+		Log:          app.log,
+		Cfg:          app.config,
+		AppBuildInfo: app.buildInfo,
+		BasePath:     app.basePath,
+	}).NewVersionHandler()
 
 	// Initialize swagger handler
 	swaggerHandlerConf := handlers.SwaggerHandlerConfig{
@@ -49,31 +43,20 @@ func (app *App) initHandlers() error {
 	app.handlers.swaggerHandler = swaggerHandler
 
 	// Initialize health handler
-	healthHandlerConf := handlers.HealthHandlerConfig{
-		Log:           app.log,
-		Observability: app.observability,
-		Cfg:           app.config,
-		BasePath:      app.basePath,
-		Ready:         app.Ready,
-	}
-	app.handlers.healthHandler, err = healthHandlerConf.NewHealthHandler()
-	if err != nil {
-		app.log.Error("Failed to initialize health handler", "error", err)
-		return err
-	}
+	app.handlers.healthHandler = (&handlers.HealthHandlerConfig{
+		Log:      app.log,
+		Cfg:      app.config,
+		BasePath: app.basePath,
+		Ready:    app.Ready,
+	}).NewHealthHandler()
 
 	// Initialize dummy business logic handler
-	dummyBusinessLogicHandlerConf := handlers.DummyBusinessLogicHandlerConfig{
+	app.handlers.dummyBusinessLogicHandler = (&handlers.DummyBusinessLogicHandlerConfig{
 		Log:           app.log,
 		Observability: app.observability,
 		Cfg:           app.config,
 		BasePath:      app.basePath,
-	}
-	app.handlers.dummyBusinessLogicHandler, err = dummyBusinessLogicHandlerConf.NewDummyBusinessLogicHandler()
-	if err != nil {
-		app.log.Error("Failed to initialize dummy business logic handler", "error", err)
-		return err
-	}
+	}).NewDummyBusinessLogicHandler()
 
 	// Initialize the JWT service once; it is shared by the token handler and the authorization middleware
 	app.jwtService, err = service.NewJWTService(service.JWTServiceConfig{
@@ -91,25 +74,19 @@ func (app *App) initHandlers() error {
 
 	// Initialize the token handler only when the development token endpoint is enabled
 	if app.config.JWT.DevTokenEndpoint {
-		tokenHandlerConf := handlers.TokenHandlerConfig{
-			Log:           app.log,
-			Observability: app.observability,
-			Cfg:           app.config,
-			JWTService:    app.jwtService,
-			BasePath:      app.basePath,
-		}
-		app.handlers.tokenHandler, err = tokenHandlerConf.NewTokenHandler()
-		if err != nil {
-			app.log.Error("Failed to initialize token handler", "error", err)
-			return err
-		}
+		app.handlers.tokenHandler = (&handlers.TokenHandlerConfig{
+			Log:        app.log,
+			Cfg:        app.config,
+			JWTService: app.jwtService,
+			BasePath:   app.basePath,
+		}).NewTokenHandler()
 	}
 
 	return nil
 }
 
 // registerRoutes installs the global middleware chain and registers all routes
-func (app *App) registerRoutes() {
+func (app *App) registerRoutes() error {
 	metricsPath := app.config.Observability.MetricsPath
 
 	// Probes and metrics scrapes are logged at Debug to keep the logs readable.
@@ -118,10 +95,18 @@ func (app *App) registerRoutes() {
 		quietPaths = append(quietPaths, metricsPath)
 	}
 
+	metrics, err := middleware.Metrics(app.observability.MeterProvider)
+	if err != nil {
+		return fmt.Errorf("failed to initialize metrics middleware: %w", err)
+	}
+
 	// Global chain, outermost first: every request (including unmatched
-	// routes) gets a request ID, an access log entry, panic recovery, CORS
-	// and a body size limit.
+	// routes) gets a server span continuing any propagated trace, request
+	// count and duration metrics, a request ID, an access log entry, panic
+	// recovery, CORS and a body size limit. Probes and scrapes are not traced.
 	app.server.Use(
+		middleware.Tracing(app.observability.Trace, app.observability.Propagator, quietPaths...),
+		metrics,
 		middleware.RequestID,
 		middleware.Logging(app.log, quietPaths...),
 		middleware.Recovery(app.log),
@@ -153,4 +138,5 @@ func (app *App) registerRoutes() {
 	app.handlers.dummyBusinessLogicHandler.RegisterRoutes(app.server, authorizationMiddleware)
 
 	app.handlers.swaggerHandler.RegisterRoutes(app.server, httpSwagger.WrapHandler)
+	return nil
 }

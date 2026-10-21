@@ -37,18 +37,13 @@ func newTestJWTService(t *testing.T) *service.JWTService {
 
 func TestTokenHandler_CreateToken(t *testing.T) {
 	jwtService := newTestJWTService(t)
-	obs, _ := newTestObservability(t)
 
 	cfg := handlers.TokenHandlerConfig{
-		Log:           discardLogger(),
-		Observability: obs,
-		JWTService:    jwtService,
-		BasePath:      testBasePath,
+		Log:        discardLogger(),
+		JWTService: jwtService,
+		BasePath:   testBasePath,
 	}
-	h, err := cfg.NewTokenHandler()
-	if err != nil {
-		t.Fatalf("NewTokenHandler: %v", err)
-	}
+	h := cfg.NewTokenHandler()
 	router := newTestRouter()
 	h.RegisterRoutes(router)
 
@@ -100,17 +95,12 @@ func TestTokenHandler_CreateToken(t *testing.T) {
 }
 
 func TestTokenHandler_RejectsOtherMethods(t *testing.T) {
-	obs, _ := newTestObservability(t)
 	cfg := handlers.TokenHandlerConfig{
-		Log:           discardLogger(),
-		Observability: obs,
-		JWTService:    newTestJWTService(t),
-		BasePath:      testBasePath,
+		Log:        discardLogger(),
+		JWTService: newTestJWTService(t),
+		BasePath:   testBasePath,
 	}
-	h, err := cfg.NewTokenHandler()
-	if err != nil {
-		t.Fatalf("NewTokenHandler: %v", err)
-	}
+	h := cfg.NewTokenHandler()
 	router := newTestRouter()
 	h.RegisterRoutes(router)
 
@@ -122,17 +112,12 @@ func TestTokenHandler_RejectsOtherMethods(t *testing.T) {
 }
 
 func TestTokenHandler_RejectsOversizedBody(t *testing.T) {
-	obs, _ := newTestObservability(t)
 	cfg := handlers.TokenHandlerConfig{
-		Log:           discardLogger(),
-		Observability: obs,
-		JWTService:    newTestJWTService(t),
-		BasePath:      testBasePath,
+		Log:        discardLogger(),
+		JWTService: newTestJWTService(t),
+		BasePath:   testBasePath,
 	}
-	h, err := cfg.NewTokenHandler()
-	if err != nil {
-		t.Fatalf("NewTokenHandler: %v", err)
-	}
+	h := cfg.NewTokenHandler()
 	router := newTestRouter()
 	h.RegisterRoutes(router)
 	limited := middleware.BodyLimit(16)(router)

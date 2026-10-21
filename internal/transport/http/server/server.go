@@ -66,7 +66,9 @@ func (s *HTTPServer) Use(middlewares ...middleware.Middleware) {
 // already in use are returned to the caller, and then serves requests in the
 // background. A fatal error from the serve loop is reported on Errors().
 func (s *HTTPServer) Start() error {
-	s.httpServer.Handler = middleware.Chain(s.mux, s.middlewares...)
+	// RouteTagger sits right around the mux so the global chain (tracing,
+	// metrics) learns which route pattern matched.
+	s.httpServer.Handler = middleware.Chain(middleware.RouteTagger(s.mux), s.middlewares...)
 
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {

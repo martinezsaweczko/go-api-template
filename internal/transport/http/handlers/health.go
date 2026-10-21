@@ -9,18 +9,14 @@ import (
 
 	"github.com/martinezsaweczko/go-api-template/internal/config"
 	"github.com/martinezsaweczko/go-api-template/internal/model"
-	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
 // HealthHandlerConfig holds dependencies for the health handler
 type HealthHandlerConfig struct {
-	Log           *slog.Logger
-	Observability *observability.ObservabilityInst
-	Cfg           *config.Config
-	BasePath      string
+	Log      *slog.Logger
+	Cfg      *config.Config
+	BasePath string
 	// Ready reports whether the application is ready to receive traffic.
 	// Nil means always ready.
 	Ready func() bool
@@ -28,35 +24,25 @@ type HealthHandlerConfig struct {
 
 // HealthHandler handles health check requests
 type HealthHandler struct {
-	log           *slog.Logger
-	observability *observability.ObservabilityInst
-	cfg           *config.Config
-	handlerCalls  metric.Int64Counter
-	basePath      string
-	ready         func() bool
+	log      *slog.Logger
+	cfg      *config.Config
+	basePath string
+	ready    func() bool
 }
 
 // NewHealthHandler creates a new health handler
-func (h *HealthHandlerConfig) NewHealthHandler() (*HealthHandler, error) {
-	handlerCalls, err := h.Observability.MeterProvider.Meter("health_handler").Int64Counter("health_handler_calls", metric.WithDescription("Number of calls to the health handler"))
-	if err != nil {
-		h.Log.Error("Failed to create health handler counter", "error", err)
-		return nil, err
-	}
-
+func (h *HealthHandlerConfig) NewHealthHandler() *HealthHandler {
 	ready := h.Ready
 	if ready == nil {
 		ready = func() bool { return true }
 	}
 
 	return &HealthHandler{
-		log:           h.Log,
-		observability: h.Observability,
-		cfg:           h.Cfg,
-		handlerCalls:  handlerCalls,
-		basePath:      h.BasePath,
-		ready:         ready,
-	}, nil
+		log:      h.Log,
+		cfg:      h.Cfg,
+		basePath: h.BasePath,
+		ready:    ready,
+	}
 }
 
 // Probe paths served outside the API base path.
@@ -113,10 +99,7 @@ func writeStatus(w http.ResponseWriter, code int, status string) {
 //	@Failure      500  {object}  model.HTTPError
 //	@Router       /health [get]
 func (h *HealthHandler) getHealth(w http.ResponseWriter, r *http.Request) {
-	h.log.Debug("Received request for health status")
-
-	_, span := h.observability.Trace.Tracer("health_handler").Start(r.Context(), "getHealthHandler")
-	defer span.End()
+	h.log.DebugContext(r.Context(), "Received request for health status")
 
 	healthInfo := &model.HealthInfo{
 		Status:    "ok",
@@ -126,18 +109,6 @@ func (h *HealthHandler) getHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(healthInfo); err != nil {
-		h.log.Error("Failed to encode health information", "error", err)
-		h.handlerCalls.Add(r.Context(), 1,
-			metric.WithAttributes(attribute.String("method", "GET")),
-			metric.WithAttributes(attribute.Int("http_code", http.StatusInternalServerError)),
-			metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/health", h.basePath))),
-		)
-		return
+		h.log.ErrorContext(r.Context(), "Failed to encode health information", "error", err)
 	}
-
-	h.handlerCalls.Add(r.Context(), 1,
-		metric.WithAttributes(attribute.String("method", "GET")),
-		metric.WithAttributes(attribute.Int("http_code", http.StatusOK)),
-		metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/health", h.basePath))),
-	)
 }

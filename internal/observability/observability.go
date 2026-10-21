@@ -1,40 +1,47 @@
+// Package observability bootstraps the OpenTelemetry tracer and meter
+// providers. Logs are not routed through OpenTelemetry: the application logs
+// JSON to stdout with log/slog.
 package observability
 
 import (
 	"context"
 	"errors"
-	"time"
+	"fmt"
 
 	"github.com/martinezsaweczko/go-api-template/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/noop"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
+// ObservabilityInst holds the providers the HTTP layer instruments with.
 type ObservabilityInst struct {
-	Trace         *trace.TracerProvider
+	// Trace is an SDK provider exporting over OTLP, or a no-op provider when
+	// no OTLP endpoint is configured.
+	Trace trace.TracerProvider
+	// MeterProvider feeds the Prometheus exporter, or is a no-op provider
+	// when metrics are disabled.
 	MeterProvider metric.MeterProvider
+	// Propagator extracts and injects W3C trace context and baggage.
+	Propagator propagation.TextMapPropagator
 }
 
-// SetupOTelSDK bootstraps the OpenTelemetry pipeline.
+// SetupOTelSDK bootstraps the OpenTelemetry pipeline and registers the
+// providers globally. serviceVersion is reported as service.version.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func SetupOTelSDK(ctx context.Context, config *config.ObservabilityConfig) (func(context.Context) error, ObservabilityInst, error) {
+func SetupOTelSDK(ctx context.Context, cfg *config.ObservabilityConfig, serviceVersion string) (func(context.Context) error, ObservabilityInst, error) {
 	var shutdownFuncs []func(context.Context) error
-	var err error
 
-	observabilityInst := ObservabilityInst{}
-
-	// shutdown calls cleanup functions registered via shutdownFuncs.
-	// The errors from the calls are joined.
-	// Each registered cleanup will be invoked once.
+	// shutdown calls the registered cleanup functions once and joins their errors.
 	shutdown := func(ctx context.Context) error {
 		var err error
 		for _, fn := range shutdownFuncs {
@@ -44,61 +51,43 @@ func SetupOTelSDK(ctx context.Context, config *config.ObservabilityConfig) (func
 		return err
 	}
 
-	// handleErr calls shutdown for cleanup and makes sure that all errors are returned.
-	handleErr := func(inErr error) {
-		err = errors.Join(inErr, shutdown(ctx))
+	inst := ObservabilityInst{Propagator: newPropagator()}
+	otel.SetTextMapPropagator(inst.Propagator)
+
+	res, err := newResource(ctx, cfg.ServiceName, serviceVersion)
+	if err != nil {
+		return shutdown, inst, err
 	}
 
-	// Set up propagator.
-	prop := newPropagator()
-	otel.SetTextMapPropagator(prop)
-
-	// Set up trace provider.
-	if config.OTLPEndpoint != "" {
-		tracerProvider, err := newTracerProvider(ctx, config.OTLPEndpoint)
+	// Without an OTLP endpoint tracing is a no-op: spans are neither recorded
+	// nor exported, while propagated trace context still flows through.
+	if cfg.OTLPEndpoint != "" {
+		tracerProvider, err := newTracerProvider(ctx, cfg.OTLPEndpoint, res)
 		if err != nil {
-			handleErr(err)
-			return shutdown, observabilityInst, err
+			return shutdown, inst, errors.Join(err, shutdown(ctx))
 		}
 		shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
-		observabilityInst.Trace = tracerProvider
-		otel.SetTracerProvider(tracerProvider)
+		inst.Trace = tracerProvider
 	} else {
-		// If no trace endpoint is provided, set a no-op tracer provider to avoid errors when tracing is attempted.
-		observabilityInst.Trace = trace.NewTracerProvider(trace.WithSampler(trace.NeverSample()))
-		otel.SetTracerProvider(observabilityInst.Trace)
+		inst.Trace = tracenoop.NewTracerProvider()
 	}
+	otel.SetTracerProvider(inst.Trace)
 
-	// Set up meter provider.
-	// If no Prometheus path is provided, we can skip setting up the meter provider, as the application currently doesn't use it for anything else.
-	if config.MetricsPath != "" {
-		meterProvider, err := newMeterProvider()
+	// Metrics are exposed only through the Prometheus endpoint, so they are
+	// a no-op when no metrics path is configured.
+	if cfg.MetricsPath != "" {
+		meterProvider, err := newMeterProvider(res)
 		if err != nil {
-			handleErr(err)
-			return shutdown, observabilityInst, err
+			return shutdown, inst, errors.Join(err, shutdown(ctx))
 		}
 		shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
-		otel.SetMeterProvider(meterProvider)
-
+		inst.MeterProvider = meterProvider
 	} else {
-		noopMeterProvider := noop.NewMeterProvider()
-
-		otel.SetMeterProvider(noopMeterProvider)
-
+		inst.MeterProvider = metricnoop.NewMeterProvider()
 	}
+	otel.SetMeterProvider(inst.MeterProvider)
 
-	observabilityInst.MeterProvider = otel.GetMeterProvider()
-
-	// Set up logger provider.
-	loggerProvider, err := newLoggerProvider()
-	if err != nil {
-		handleErr(err)
-		return shutdown, observabilityInst, err
-	}
-	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
-	global.SetLoggerProvider(loggerProvider)
-
-	return shutdown, observabilityInst, err
+	return shutdown, inst, nil
 }
 
 func newPropagator() propagation.TextMapPropagator {
@@ -108,54 +97,48 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTracerProvider(ctx context.Context, tracerEndpoint string) (*trace.TracerProvider, error) {
-	// traceExporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-	// if err != nil {
-	// 	return nil, err
-	// }
+// newResource describes this service. Standard OTEL_RESOURCE_ATTRIBUTES are
+// honoured, but the configured service name and version take precedence.
+func newResource(ctx context.Context, serviceName, serviceVersion string) (*resource.Resource, error) {
+	attrs := []resource.Option{
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
+		resource.WithAttributes(semconv.ServiceName(serviceName)),
+	}
+	if serviceVersion != "" {
+		attrs = append(attrs, resource.WithAttributes(semconv.ServiceVersion(serviceVersion)))
+	}
+	res, err := resource.New(ctx, attrs...)
+	if err != nil {
+		return nil, fmt.Errorf("create OpenTelemetry resource: %w", err)
+	}
+	return res, nil
+}
 
-	traceExporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(tracerEndpoint),
+func newTracerProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
-
-	tracerProvider := trace.NewTracerProvider(
-		trace.WithBatcher(traceExporter,
-			// Default is 5s. Set to 1s for demonstrative purposes.
-			trace.WithBatchTimeout(time.Second)),
-	)
-	return tracerProvider, nil
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	), nil
 }
 
-func newMeterProvider() (*sdkmetric.MeterProvider, error) {
-	// metricExporter, err := stdoutmetric.New(stdoutmetric.WithPrettyPrint())
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// Meter exporter to PromQL
-	// The exporter embeds a default OpenTelemetry Reader and
-	// implements prometheus.Collector, allowing it to be used as
-	// both a Reader and Collector.
+func newMeterProvider(res *resource.Resource) (*sdkmetric.MeterProvider, error) {
+	// The Prometheus exporter is both a metric Reader and a
+	// prometheus.Collector registered on the default registry served by
+	// promhttp.Handler().
 	exporter, err := prometheus.New()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create Prometheus exporter: %w", err)
 	}
-
-	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
-	return meterProvider, nil
-}
-
-func newLoggerProvider() (*log.LoggerProvider, error) {
-	logExporter, err := stdoutlog.New(stdoutlog.WithPrettyPrint())
-	if err != nil {
-		return nil, err
-	}
-
-	loggerProvider := log.NewLoggerProvider(
-		log.WithProcessor(log.NewBatchProcessor(logExporter)),
-	)
-	return loggerProvider, nil
+	return sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(exporter),
+		sdkmetric.WithResource(res),
+	), nil
 }

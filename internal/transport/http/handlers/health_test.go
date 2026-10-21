@@ -10,18 +10,13 @@ import (
 )
 
 func TestHealthProbes(t *testing.T) {
-	obs, _ := newTestObservability(t)
 	var ready atomic.Bool
 	cfg := handlers.HealthHandlerConfig{
-		Log:           discardLogger(),
-		Observability: obs,
-		BasePath:      testBasePath,
-		Ready:         ready.Load,
+		Log:      discardLogger(),
+		BasePath: testBasePath,
+		Ready:    ready.Load,
 	}
-	h, err := cfg.NewHealthHandler()
-	if err != nil {
-		t.Fatalf("NewHealthHandler: %v", err)
-	}
+	h := cfg.NewHealthHandler()
 	router := newTestRouter()
 	h.RegisterRoutes(router)
 

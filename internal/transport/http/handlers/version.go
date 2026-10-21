@@ -8,56 +8,37 @@ import (
 
 	"github.com/martinezsaweczko/go-api-template/internal/config"
 	"github.com/martinezsaweczko/go-api-template/internal/model"
-	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 )
 
-// Router defines the interface for registering routes
-
+// VersionHandlerConfig holds dependencies for the version handler.
 type VersionHandlerConfig struct {
-	Log           *slog.Logger
-	Observability *observability.ObservabilityInst
-	Cfg           *config.Config
-	AppBuildInfo  model.BuildInfo
-	BasePath      string
+	Log          *slog.Logger
+	Cfg          *config.Config
+	AppBuildInfo model.BuildInfo
+	BasePath     string
 }
 
+// VersionHandler serves the build information.
 type VersionHandler struct {
-	log           *slog.Logger
-	observability *observability.ObservabilityInst
-	cfg           *config.Config
-	handlerCalls  metric.Int64Counter
-	appBuildInfo  model.BuildInfo
-	basePath      string
+	log          *slog.Logger
+	cfg          *config.Config
+	appBuildInfo model.BuildInfo
+	basePath     string
 }
 
-// NewVersionHandler creates a new version handler
-func (v *VersionHandlerConfig) NewVersionHandler() (*VersionHandler, error) {
-	// This is a wrapper to simplify imports in the app package
-
-	handlerCalls, err := v.Observability.MeterProvider.Meter("version_handler").Int64Counter("version_handler_calls", metric.WithDescription("Number of calls to the version handler"))
-	if err != nil {
-		v.Log.Error("Failed to create version handler counter", "error", err)
-		return nil, err
-
+// NewVersionHandler creates a new version handler.
+func (v *VersionHandlerConfig) NewVersionHandler() *VersionHandler {
+	return &VersionHandler{
+		log:          v.Log,
+		cfg:          v.Cfg,
+		appBuildInfo: v.AppBuildInfo,
+		basePath:     v.BasePath,
 	}
-
-	versionHandler := &VersionHandler{
-		log:           v.Log,
-		observability: v.Observability,
-		cfg:           v.Cfg,
-		handlerCalls:  handlerCalls,
-		appBuildInfo:  v.AppBuildInfo,
-		basePath:      v.BasePath,
-	}
-	return versionHandler, nil
 }
 
-// Register the routes for the version handler
+// RegisterRoutes registers the version handler route.
 func (v *VersionHandler) RegisterRoutes(router Router, middlewares ...middleware.Middleware) {
-	// Register the version handler route
 	path := fmt.Sprintf("%s/version", v.basePath)
 	if len(middlewares) > 0 {
 		router.HandleFuncWithMiddleware("GET "+path, v.getVersion, middlewares...)
@@ -79,11 +60,7 @@ func (v *VersionHandler) RegisterRoutes(router Router, middlewares ...middleware
 //	@Failure      500  {object}  model.HTTPError
 //	@Router       /version [get]
 func (v *VersionHandler) getVersion(w http.ResponseWriter, r *http.Request) {
-
-	v.log.Info("Received request for version information")
-
-	_, span := v.observability.Trace.Tracer("version_handler").Start(r.Context(), "getVersionHandler")
-	defer span.End()
+	v.log.InfoContext(r.Context(), "Received request for version information")
 
 	versionInfo := &model.VersionInfo{
 		Version:   v.appBuildInfo.Version,
@@ -91,21 +68,8 @@ func (v *VersionHandler) getVersion(w http.ResponseWriter, r *http.Request) {
 		AppName:   v.appBuildInfo.AppName,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(versionInfo)
-	if err != nil {
-		v.log.Error("Failed to encode version information", "error", err)
-		v.handlerCalls.Add(r.Context(), 1, metric.WithAttributes(
-			attribute.String("method", "GET")),
-			metric.WithAttributes(attribute.Int("http_code", http.StatusInternalServerError)),
-			metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/version", v.basePath))),
-		)
+	if err := json.NewEncoder(w).Encode(versionInfo); err != nil {
+		v.log.ErrorContext(r.Context(), "Failed to encode version information", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
 	}
-	v.handlerCalls.Add(r.Context(), 1, metric.WithAttributes(
-		attribute.String("method", "GET")),
-		metric.WithAttributes(attribute.Int("http_code", http.StatusOK)),
-		metric.WithAttributes(attribute.String("path", fmt.Sprintf("%s/version", v.basePath))),
-	)
-
 }

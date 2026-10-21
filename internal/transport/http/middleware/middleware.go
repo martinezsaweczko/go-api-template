@@ -1,6 +1,6 @@
-// Package middleware provides composable net/http middleware: recovery,
-// request IDs, access logging, CORS, request body limits and JWT
-// authorization. Every middleware has the shape func(http.Handler) http.Handler.
+// Package middleware provides composable net/http middleware: tracing,
+// metrics, recovery, request IDs, access logging, CORS, request body limits
+// and JWT authorization. Every middleware has the shape func(http.Handler) http.Handler.
 package middleware
 
 import (
