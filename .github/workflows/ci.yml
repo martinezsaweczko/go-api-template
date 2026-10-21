@@ -1,49 +1,137 @@
-name: CI - Build & Check
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main]
   pull_request:
-    branches:
-      - main
-      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Keep in line with GOLANGCI_LINT_VERSION in the Makefile.
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GOVULNCHECK_VERSION: v1.9.0
+  SWAG_VERSION: v1.16.4
 
 jobs:
-  build:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: "1.26.1"
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting, vet and module tidiness
+        run: make check
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
 
-      - name: Run go vet
-        run: go vet ./...
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Tests generate their own throwaway keys; `make keys` is not needed.
+      - name: Run tests with race detector and coverage
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -n 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
 
-      - name: Run go fmt check
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  verify:
+    name: Verify generated files and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Module tidiness is checked by `make check` in the lint job.
+      - name: Install swag
+        run: go install "github.com/swaggo/swag/cmd/swag@${SWAG_VERSION}"
+      - name: Verify swagger docs are up to date
         run: |
-          gofmt -l .
-          if [ $(gofmt -l . | wc -l) -gt 0 ]; then
-            echo "Some files are not formatted. Run 'go fmt ./...'"
+          make swagger
+          # Fails on modified tracked files and on new untracked files in docs/.
+          if ! git diff --exit-code -- docs/ || [ -n "$(git status --porcelain -- docs/)" ]; then
+            git status --short -- docs/
+            echo "::error::docs/ is out of date. Run 'make swagger' and commit the result."
             exit 1
           fi
+      - name: Build
+        run: go build ./...
 
-      - name: Run vulnerability check
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+  init-script:
+    name: Init script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Projects that deleted the bootstrap scripts skip these steps; an
+      # initialized project keeps them green because the test skips itself.
+      - name: Install swag
+        if: hashFiles('scripts/init_test.sh') != ''
+        run: go install "github.com/swaggo/swag/cmd/swag@${SWAG_VERSION}"
+      - name: Test scripts/init.sh
+        if: hashFiles('scripts/init_test.sh') != ''
+        run: make test-init
 
-      - name: Verify go.mod tidiness
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum is not tidy" && exit 1)
-
-      - name: Build application
-        run: go build -o build/main cmd/main.go
-
-      - name: Run tests
-        run: go test -v -race -count=1 ./...
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

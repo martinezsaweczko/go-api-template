@@ -1,6 +1,18 @@
 {
   "cSpell.words": [
+    "distroless",
+    "goenv",
+    "gofmt",
+    "golangci",
+    "goreleaser",
+    "govulncheck",
+    "livez",
     "martinezsaweczko",
-    "otelgrpc"
+    "otelgrpc",
+    "otelhttp",
+    "readyz",
+    "slog",
+    "stdlib",
+    "vulncheck"
   ]
 }

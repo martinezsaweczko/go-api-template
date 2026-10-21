@@ -41,7 +41,6 @@ definitions:
       version:
         type: string
     type: object
-host: localhost:8080
 info:
   contact: {}
   description: Production-ready Go API template.
@@ -114,6 +113,10 @@ paths:
             $ref: '#/definitions/model.TokenResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "500":
