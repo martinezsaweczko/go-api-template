@@ -5,7 +5,13 @@
 # Usage: scripts/init.sh [--dry-run] [--force] [--copyright "Name"] <module-path> <app-name> [github-owner]
 # Example: scripts/init.sh github.com/acme/orders-api orders-api acme
 #
-# Run it once, right after creating the repository, then delete it.
+# The script checks everything it can before writing. If a later step fails
+# (go mod tidy, make swagger, go build, go test...), it restores the working
+# tree to HEAD, so it is safe to fix the cause and run it again. With --force
+# (uncommitted changes allowed) it never rolls back; it prints what changed.
+#
+# Run it once, right after creating the repository, then delete it together
+# with scripts/init_test.sh (its test, run by `make test-init`).
 set -euo pipefail
 
 readonly OLD_MODULE="github.com/martinezsaweczko/go-api-template"
@@ -13,8 +19,22 @@ readonly OLD_OWNER="martinezsaweczko"
 readonly OLD_APP="go-api-template"
 readonly OLD_TITLE="Go API Template"
 
-# Files that keep their original text: the license and this script.
-readonly EXCLUDES=(':(exclude)LICENSE' ':(exclude)CHANGELOG.md' ':(exclude)scripts/init.sh')
+# Files the blanket text replacement never touches:
+#   LICENSE                the holder changes only through --copyright
+#   CHANGELOG.md           release history keeps the old names (if present)
+#   go.mod                 the module is renamed by `go mod edit -module`
+#   scripts/init.sh        this script
+#   scripts/init_test.sh   its test, which must keep the template names
+readonly EXCLUDES=(
+	':(exclude)LICENSE'
+	':(exclude)CHANGELOG.md'
+	':(exclude)go.mod'
+	':(exclude)scripts/init.sh'
+	':(exclude)scripts/init_test.sh'
+)
+
+# Matches the copyright line rewritten by --copyright.
+readonly COPYRIGHT_RE='^Copyright \(c\) \d{4}'
 
 usage() {
 	cat <<'EOF'
@@ -28,6 +48,7 @@ Arguments:
 Options:
   --dry-run            Show what would change and exit without modifying anything
   --force              Run even if the git working tree has uncommitted changes
+                       (no automatic rollback on failure)
   --copyright NAME     Replace the copyright holder in LICENSE
   -h, --help           Show this help
 EOF
@@ -45,6 +66,11 @@ info() {
 warn() {
 	printf 'warning: %s\n' "$*" >&2
 }
+
+# ---------------------------------------------------------------------------
+# Preflight: nothing below this section writes to the working tree until
+# "writes_started=1".
+# ---------------------------------------------------------------------------
 
 dry_run=0
 force=0
@@ -81,6 +107,7 @@ new_owner="${positional[2]:-}"
 
 [[ "$new_module" =~ ^[a-z0-9]+([.-][a-z0-9]+)*\.[a-z]{2,}(/[A-Za-z0-9._~-]+)+$ ]] ||
 	die "invalid module path '$new_module' (expected something like github.com/acme/orders-api)"
+[[ "$new_module" != "$OLD_MODULE" ]] || die "the new module path is the template's own path"
 [[ "$new_app" =~ ^[a-z][a-z0-9-]*$ ]] ||
 	die "invalid app name '$new_app' (lowercase letters, digits and dashes, starting with a letter)"
 if [[ -n "$new_owner" ]]; then
@@ -88,6 +115,16 @@ if [[ -n "$new_owner" ]]; then
 		die "invalid GitHub owner '$new_owner'"
 fi
 [[ "$copyright" != *$'\n'* ]] || die "--copyright must be a single line"
+
+missing=()
+for tool in git go gofmt perl make; do
+	command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+[[ ${#missing[@]} -eq 0 ]] || die "required tools not found: ${missing[*]}"
+have_swag=0
+if command -v swag >/dev/null 2>&1; then
+	have_swag=1
+fi
 
 # Title Case name for the OpenAPI title: orders-api -> Orders API.
 title_case() {
@@ -112,8 +149,15 @@ current_module="$(awk '$1 == "module" { print $2; exit }' go.mod)"
 [[ "$current_module" == "$OLD_MODULE" ]] ||
 	die "module is '$current_module', expected '$OLD_MODULE' (already initialized?)"
 
-if [[ $dry_run -eq 0 && $force -eq 0 && -n "$(git status --porcelain)" ]]; then
+status="$(git status --porcelain)" || die "git status failed"
+if [[ $dry_run -eq 0 && $force -eq 0 && -n "$status" ]]; then
 	die "the working tree has uncommitted changes; commit or stash them, or pass --force"
+fi
+
+if [[ -n "$copyright" ]]; then
+	[[ -f LICENSE ]] || die "--copyright given but LICENSE does not exist"
+	RE="$COPYRIGHT_RE" perl -ne 'if (/$ENV{RE}/) { $found = 1 } END { exit($found ? 0 : 1) }' LICENSE ||
+		die "--copyright given but LICENSE has no 'Copyright (c) YEAR ...' line to replace"
 fi
 
 # Literal replacements, applied in order (olds[i] -> news[i]). The URL rule
@@ -136,9 +180,13 @@ fi
 add_rule "$OLD_APP" "$new_app"
 add_rule "$OLD_TITLE" "$new_title"
 
-# files_with lists tracked text files that contain the literal string $1.
+# files_with prints the tracked text files that contain the literal string $1,
+# one per line. git grep exits 1 for "no match", which is fine; any other
+# failure aborts the script (and rolls back if writes already started).
 files_with() {
-	git grep -lIF -e "$1" -- . "${EXCLUDES[@]}" || true
+	local rc=0
+	git grep -lIF -e "$1" -- . "${EXCLUDES[@]}" || rc=$?
+	[[ $rc -le 1 ]] || die "git grep failed (exit $rc) while searching for '$1'"
 }
 
 # replace_in_files replaces the literal $1 with $2 in every given file.
@@ -155,47 +203,95 @@ if [[ -n "$new_owner" ]]; then
 else
 	warn "no github-owner given: CODEOWNERS and owner-specific links keep '$OLD_OWNER'"
 fi
-
-for i in "${!olds[@]}"; do
-	old="${olds[$i]}"
-	new="${news[$i]}"
-	mapfile -t files < <(files_with "$old")
-	[[ ${#files[@]} -gt 0 ]] || continue
-	if [[ $dry_run -eq 1 ]]; then
-		info "would replace '$old' -> '$new' in:"
-		printf '      %s\n' "${files[@]}"
-	else
-		replace_in_files "$old" "$new" "${files[@]}"
-		info "replaced '$old' -> '$new' in ${#files[@]} file(s)"
-	fi
-done
-
-if [[ -n "$copyright" ]]; then
-	if [[ $dry_run -eq 1 ]]; then
-		info "would set the LICENSE copyright holder to '$copyright'"
-	else
-		HOLDER="$copyright" YEAR="$(date +%Y)" perl -pi -e \
-			's/^Copyright \(c\) \d{4}.*$/Copyright (c) $ENV{YEAR} $ENV{HOLDER}/' LICENSE
-		info "set the LICENSE copyright holder to '$copyright'"
-	fi
+if [[ $have_swag -eq 0 ]]; then
+	warn "swag not found: docs/ will be updated textually only; install swag and run 'make swagger' afterwards"
 fi
 
 if [[ $dry_run -eq 1 ]]; then
+	info "would set the module in go.mod to '$new_module' (go mod edit -module)"
+	for i in "${!olds[@]}"; do
+		out="$(files_with "${olds[$i]}")"
+		[[ -n "$out" ]] || continue
+		info "would replace '${olds[$i]}' -> '${news[$i]}' in:"
+		while IFS= read -r file; do
+			printf '      %s\n' "$file"
+		done <<<"$out"
+	done
+	if [[ -n "$copyright" ]]; then
+		info "would set the LICENSE copyright holder to '$copyright'"
+	fi
 	info "dry run: nothing was changed"
 	exit 0
 fi
 
-# The blanket replacement already rewrote go.mod; go mod edit validates it.
+# ---------------------------------------------------------------------------
+# Writes. From here on, a failure triggers on_exit.
+# ---------------------------------------------------------------------------
+
+writes_started=0
+finished=0
+
+rollback() {
+	git restore --source=HEAD --staged --worktree -- . &&
+		git clean -fdq -- .
+}
+
+on_exit() {
+	local rc=$?
+	[[ $writes_started -eq 1 && $finished -eq 0 ]] || return 0
+	[[ $rc -ne 0 ]] || rc=1
+	printf '\n' >&2
+	if [[ $force -eq 1 ]]; then
+		warn "init failed after modifying files. Because of --force (the tree had uncommitted changes), nothing was rolled back."
+		warn "Files changed now (yours and the script's):"
+		git status --short >&2 || true
+		warn "Inspect them with 'git diff'. 'git restore <file>' undoes the script's edits to a file but also discards your own uncommitted edits in it."
+	elif rollback; then
+		warn "init failed; rolled back: the working tree is back at HEAD, nothing changed. Fix the cause above and run the script again."
+	else
+		warn "init failed and the rollback also failed. Restore the tree manually:"
+		warn "  git restore --source=HEAD --staged --worktree -- . && git clean -fd"
+	fi
+	exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+writes_started=1
+
+# go.mod is excluded from the text replacement: go mod edit is the authoritative
+# module rename and validates the new path.
+info "go mod edit -module $new_module"
 go mod edit -module "$new_module"
+
+for i in "${!olds[@]}"; do
+	old="${olds[$i]}"
+	new="${news[$i]}"
+	out="$(files_with "$old")"
+	[[ -n "$out" ]] || continue
+	mapfile -t files <<<"$out"
+	replace_in_files "$old" "$new" "${files[@]}"
+	info "replaced '$old' -> '$new' in ${#files[@]} file(s)"
+done
+
+if [[ -n "$copyright" ]]; then
+	year="$(date +%Y)"
+	RE="$COPYRIGHT_RE" HOLDER="$copyright" YEAR="$year" perl -pi -e \
+		's/$ENV{RE}.*$/Copyright (c) $ENV{YEAR} $ENV{HOLDER}/' LICENSE
+	# Fail (and roll back) unless the line now names the new holder.
+	HOLDER="$copyright" YEAR="$year" perl -ne \
+		'if ($_ eq "Copyright (c) $ENV{YEAR} $ENV{HOLDER}\n") { $found = 1 } END { exit($found ? 0 : 1) }' LICENSE ||
+		die "the LICENSE copyright line was not updated to '$copyright'"
+	info "set the LICENSE copyright holder to '$copyright'"
+fi
 
 info "go mod tidy"
 go mod tidy
 
-if command -v swag >/dev/null 2>&1; then
+if [[ $have_swag -eq 1 ]]; then
 	info "make swagger"
 	make swagger
-else
-	warn "swag not found: docs/ was updated textually; install swag and run 'make swagger' to regenerate it"
 fi
 
 info "gofmt"
@@ -210,7 +306,13 @@ go build ./...
 info "go test ./..."
 go test ./...
 
-leftovers="$(git grep -nIF -e "$OLD_MODULE" -e "$OLD_APP" -e "$OLD_OWNER" -- . "${EXCLUDES[@]}" || true)"
+rc=0
+leftovers="$(git grep -nIF -e "$OLD_MODULE" -e "$OLD_APP" -e "$OLD_OWNER" -- . "${EXCLUDES[@]}")" || rc=$?
+[[ $rc -le 1 ]] || die "git grep failed (exit $rc) while checking for leftovers"
+
+finished=1
+trap - EXIT INT TERM
+
 if [[ -n "$leftovers" ]]; then
 	warn "occurrences of the old names remain; review them:"
 	printf '%s\n' "$leftovers" >&2
@@ -224,5 +326,6 @@ Done. Next steps:
   3. Run the API:               make run
   4. Commit:                    git commit -am "chore: initialize $new_app from template"
   5. Enable the repository settings listed in README.md.
-  6. Delete this script:        git rm scripts/init.sh
+  6. Delete the bootstrap:      git rm scripts/init.sh scripts/init_test.sh
+     (and, optionally, the test-init Make target and the init-script CI job)
 EOF

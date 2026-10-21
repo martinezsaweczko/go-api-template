@@ -32,7 +32,7 @@ A production-ready GitHub template for HTTP APIs in Go: start a new service with
    scripts/init.sh github.com/acme/orders-api orders-api acme
    ```
 
-   It rewrites the module path, binary/image/service names, the OpenAPI title and CODEOWNERS, then runs `go mod tidy`, `make swagger`, `gofmt`, `go build` and `go test`. Pass `--copyright "Acme Inc."` to update `LICENSE`. Delete the script afterwards.
+   It rewrites the module path, binary/image/service names, the OpenAPI title and CODEOWNERS, then runs `go mod tidy`, `make swagger`, `gofmt`, `go build` and `go test`. Pass `--copyright "Acme Inc."` to update `LICENSE`. If a step fails, it restores the tree to `HEAD` so you can fix the cause and run it again (not with `--force`, which allows uncommitted changes). Delete `scripts/init.sh` and `scripts/init_test.sh` afterwards.
 4. Generate the JWT signing keys (written to the gitignored `keys/`):
 
    ```bash
@@ -58,12 +58,15 @@ Use the Go version from the `go` directive in [`go.mod`](go.mod), for example th
 
 ### Try the protected endpoint
 
-The token endpoint is off by default. Enable it locally only:
+The token endpoint is off by default. Enable it locally only (needs [`jq`](https://jqlang.org/)):
 
 ```bash
+make build
 ./build/main -jwt-dev-token-endpoint &
-TOKEN=$(curl -s -X POST localhost:8080/api/v1/token -d '{"subject":"dev"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
+sleep 1   # wait for the server to listen
+TOKEN=$(curl -s -X POST localhost:8080/api/v1/token -d '{"subject":"dev"}' | jq -r .token)
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/dummyBusinessLogic
+kill %1   # stop the background server
 ```
 
 ## Repository settings to enable
@@ -71,7 +74,7 @@ curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/dummyBusinessLog
 These live in GitHub settings, not in the code, so a new repository does not inherit them.
 
 - [ ] **Template repository** (Settings > General), if this repository should itself be a template.
-- [ ] **Branch protection or a ruleset on `main`**: require pull requests and the CI checks `Lint`, `Test`, `Vulnerability scan`, `Verify generated files and build`, `Docker build` and `Analyze (Go)`.
+- [ ] **Branch protection or a ruleset on `main`**: require pull requests and the CI checks `Lint`, `Test`, `Vulnerability scan`, `Verify generated files and build`, `Init script`, `Docker build` and `Analyze (Go)`.
 - [ ] **GHCR package visibility** (Packages > package settings) after the first image is published.
 - [ ] **Private vulnerability reporting** (Settings > Security), used by [`SECURITY.md`](SECURITY.md).
 - [ ] **Dependabot alerts and security updates** (Settings > Security).
@@ -132,7 +135,10 @@ Precedence is **flag > environment variable > default**. Run `./build/main -h` t
 | `make swagger` | Regenerate the OpenAPI docs in `docs/` |
 | `make docker-build` | Build the container image |
 | `make release-check` | Validate `.goreleaser.yaml` |
-| `make clean` | Remove `build/` (`clean-swagger`, `clean-keys` remove `docs/` and `keys/`) |
+| `make test-init` | Test `scripts/init.sh` in throwaway copies of the repository |
+| `make clean` | Remove `build/` |
+| `make clean-swagger` | Remove the generated `docs/` (run `make swagger` to restore it) |
+| `make clean-keys` | Delete the JWT signing keys in `keys/` |
 
 ## Project layout
 
@@ -152,6 +158,7 @@ Precedence is **flag > environment variable > default**. Run `./build/main -h` t
 │       ├── middleware/         # middleware chain and authorization
 │       └── server/             # http.Server wrapper
 ├── scripts/init.sh             # one-time template bootstrap
+├── scripts/init_test.sh        # its test (make test-init)
 ├── Dockerfile                  # multi-stage, distroless, non-root
 └── .goreleaser.yaml            # release binaries and archives
 ```
@@ -160,7 +167,7 @@ Precedence is **flag > environment variable > default**. Run `./build/main -h` t
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| [`ci.yml`](.github/workflows/ci.yml) | push to `main`, pull requests | `make check` + golangci-lint, race tests with coverage, govulncheck, swagger drift and build, Docker build (no push) |
+| [`ci.yml`](.github/workflows/ci.yml) | push to `main`, pull requests | `make check` + golangci-lint, race tests with coverage, govulncheck, swagger drift and build, init script test, Docker build (no push) |
 | [`release.yml`](.github/workflows/release.yml) | tag `v*.*.*` | tests, GoReleaser GitHub release (binaries, checksums, changelog), build provenance attestation |
 | [`docker.yml`](.github/workflows/docker.yml) | tag `v*.*.*`, manual | multi-arch (`linux/amd64`, `linux/arm64`) image to `ghcr.io/<owner>/<repo>` with SBOM and provenance |
 | [`codeql.yml`](.github/workflows/codeql.yml) | push to `main`, pull requests, weekly | CodeQL analysis for Go |
@@ -179,7 +186,7 @@ The changelog is built from [Conventional Commits](https://www.conventionalcommi
 
 - **Blank environment variables count.** A set but empty `APP_*` variable overrides the default (`APP_METRICS_PATH=` disables metrics); an empty numeric, duration or boolean value fails startup. Unset the variable to keep the default.
 - **Tool fallbacks need network.** `make lint`, `make vulncheck` and `make release-check` use the installed binary, or download the pinned version with `go run`.
-- **Provenance runs after publishing.** The attestation step runs after GoReleaser publishes, so a failed attestation leaves a release without provenance; re-run the job.
+- **Provenance runs after publishing.** The attestation step runs after GoReleaser publishes, so a failed attestation leaves a published release without provenance. Do not re-run the job: GoReleaser would try to publish the same release again and fail. Either accept the release without provenance, or delete the GitHub release and the tag, fix the cause and push the tag again.
 - **Flags were renamed** from the first version of this template:
 
   | Old | New |

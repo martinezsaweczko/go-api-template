@@ -19,7 +19,7 @@ GOVULNCHECK_VERSION ?= v1.9.0
 # Set FORCE=1 to overwrite existing signing keys with `make keys`.
 FORCE ?= 0
 
-.PHONY: all build run test check fmt lint release-check vulncheck swagger docker-build clean clean-swagger keys clean-keys
+.PHONY: all build run test test-init check fmt lint release-check vulncheck swagger docker-build clean clean-swagger keys clean-keys
 
 all: check test build
 
@@ -34,6 +34,10 @@ run: build
 ## test: run the test suite with the race detector
 test:
 	go test -race -count=1 ./...
+
+## test-init: test scripts/init.sh in throwaway copies of the repository
+test-init:
+	bash scripts/init_test.sh
 
 ## check: non-mutating checks (formatting, vet, module tidiness)
 check:
