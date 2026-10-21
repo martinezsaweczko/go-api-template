@@ -1,16 +1,11 @@
 package main
 
-// @title           Swagger Example API
+// @title           Go API Template
 // @version         1.0
-// @description     This is a sample server celler server.
-// @termsOfService  http://swagger.io/terms/
+// @description     Production-ready Go API template.
 
-// @contact.name   API Support
-// @contact.url    http://www.swagger.io/support
-// @contact.email  support@swagger.io
-
-// @license.name  Apache 2.0
-// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
+// @license.name  MIT
+// @license.url   https://opensource.org/licenses/MIT
 
 // @host      localhost:8080
 // @BasePath  /api/v1
@@ -18,9 +13,6 @@ package main
 // @securityDefinitions.apiKey Bearer
 // @in header
 // @name Authorization
-
-// @externalDocs.description  OpenAPI
-// @externalDocs.url          https://swagger.io/resources/open-api/
 
 import (
 	"context"
@@ -36,7 +28,6 @@ import (
 	"github.com/martinezsaweczko/go-api-template/http_server"
 	"github.com/martinezsaweczko/go-api-template/model"
 	"github.com/martinezsaweczko/go-api-template/o11"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // Buildinfo variables set via LDFlags in the Makefile
@@ -127,53 +118,4 @@ func main() {
 	}
 
 	log.Info("Application terminated")
-
-	// ctx := context.Background()
-	// // Create a device store to store session data in SQLite
-	// dbLog := waLog.Stdout("Database", "DEBUG", true)
-	// container, err := sqlstore.New(ctx, "sqlite3", "file:whatsapp.db?_foreign_keys=on", dbLog)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// // If you want multiple sessions, remember their JIDs and use .GetDevice(jid) or .GetAllDevices() instead.
-	// deviceStore, err := container.GetFirstDevice(ctx)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// clientLog := waLog.Stdout("Client", "DEBUG", true)
-	// client := whatsmeow.NewClient(deviceStore, clientLog)
-	// client.AddEventHandler(eventHandler)
-
-	// if client.Store.ID == nil {
-	// 	// No ID stored, new login
-	// 	qrChan, _ := client.GetQRChannel(context.Background())
-	// 	err = client.Connect()
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	for evt := range qrChan {
-	// 		if evt.Event == "code" {
-	// 			// Render the QR code here
-	// 			// e.g. qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-	// 			// or just manually `echo 2@... | qrencode -t ansiutf8` in a terminal
-	// 			fmt.Println("QR code:", evt.Code)
-	//             qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-	// 		} else {
-	// 			fmt.Println("Login event:", evt.Event)
-	// 		}
-	// 	}
-	// } else {
-	// 	// Already logged in, just connect
-	// 	err = client.Connect()
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// }
-
-	// // Listen to Ctrl+C (you can also do something else that prevents the program from exiting)
-	// c := make(chan os.Signal, 1)
-	// signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	// <-c
-
-	// client.Disconnect()
 }
