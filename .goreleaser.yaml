@@ -1,0 +1,67 @@
+# GoReleaser configuration. Validate locally with `make release-check`.
+# Container images are published by .github/workflows/docker.yml, not here.
+version: 2
+
+project_name: go-api-template
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: api
+    main: ./cmd/api
+    binary: go-api-template
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # Same -X targets as the Makefile LDFLAGS and the Dockerfile.
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Tag }}
+      - -X main.buildTime={{ .Date }}
+      - -X main.appName={{ .ProjectName }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs(\\(.+\\))?!?:"
+      - "^test(\\(.+\\))?!?:"
+      - "^chore(\\(.+\\))?!?:"
+      - "^Merge "
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto

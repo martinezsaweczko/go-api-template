@@ -8,10 +8,13 @@ LDFLAGS := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.ap
 # golangci-lint version used when the binary is not installed.
 GOLANGCI_LINT_VERSION ?= v2.15.0
 
+# goreleaser version used when the binary is not installed.
+GORELEASER_VERSION ?= v2.18.3
+
 # Set FORCE=1 to overwrite existing signing keys with `make keys`.
 FORCE ?= 0
 
-.PHONY: all build run test check fmt lint vulncheck swagger docker-build clean clean-swagger keys clean-keys
+.PHONY: all build run test check fmt lint release-check vulncheck swagger docker-build clean clean-swagger keys clean-keys
 
 all: check test build
 
@@ -49,6 +52,14 @@ lint:
 		golangci-lint run ./...; \
 	else \
 		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...; \
+	fi
+
+## release-check: validate .goreleaser.yaml (the installed binary, or the pinned version via go run)
+release-check:
+	@if command -v goreleaser >/dev/null 2>&1; then \
+		goreleaser check; \
+	else \
+		go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check; \
 	fi
 
 ## vulncheck: scan dependencies for known vulnerabilities
