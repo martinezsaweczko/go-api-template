@@ -70,7 +70,7 @@ func OpenLogOutput(filePath string) (io.Writer, func() error, error) {
 	if filePath == LogStdout {
 		return os.Stdout, func() error { return nil }, nil
 	}
-	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: the path is operator configuration, not request input.
 	if err != nil {
 		return nil, nil, err
 	}

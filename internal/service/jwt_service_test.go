@@ -180,7 +180,7 @@ func TestJWTService_VerifyToken_Rejects(t *testing.T) {
 		},
 		{
 			name: "malformed",
-			token: func(t *testing.T) string {
+			token: func(_ *testing.T) string {
 				return "not-a-jwt"
 			},
 		},

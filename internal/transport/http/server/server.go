@@ -70,7 +70,8 @@ func (s *HTTPServer) Start() error {
 	// metrics) learns which route pattern matched.
 	s.httpServer.Handler = middleware.Chain(middleware.RouteTagger(s.mux), s.middlewares...)
 
-	ln, err := net.Listen("tcp", s.httpServer.Addr)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", s.httpServer.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.httpServer.Addr, err)
 	}

@@ -72,8 +72,8 @@ func TestRecoveryAfterResponseStartedAbortsWithoutSecondBody(t *testing.T) {
 		defer func() {
 			// The response cannot be fixed once started, so the connection is
 			// aborted instead of appending an error body.
-			if got := recover(); got != http.ErrAbortHandler {
-				t.Errorf("recovered %v, want http.ErrAbortHandler", got)
+			if err, _ := recover().(error); !errors.Is(err, http.ErrAbortHandler) {
+				t.Errorf("recovered %v, want http.ErrAbortHandler", err)
 			}
 		}()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -95,8 +95,8 @@ func TestRecoveryRepanicsAbortHandler(t *testing.T) {
 		panic(http.ErrAbortHandler)
 	}))
 	defer func() {
-		if got := recover(); got != http.ErrAbortHandler {
-			t.Fatalf("recovered %v, want http.ErrAbortHandler to propagate", got)
+		if err, _ := recover().(error); !errors.Is(err, http.ErrAbortHandler) {
+			t.Fatalf("recovered %v, want http.ErrAbortHandler to propagate", err)
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))

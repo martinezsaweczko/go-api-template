@@ -3,11 +3,12 @@ package app
 import (
 	"fmt"
 
+	httpSwagger "github.com/swaggo/http-swagger"
+
 	_ "github.com/martinezsaweczko/go-api-template/docs" // This is required to serve swagger docs, it registers the swagger files with the httpSwagger handler
 	"github.com/martinezsaweczko/go-api-template/internal/service"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
-	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // initHandlers initializes all HTTP handlers and registers them with the server

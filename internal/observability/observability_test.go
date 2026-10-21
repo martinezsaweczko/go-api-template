@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
@@ -86,6 +87,27 @@ func TestSetupWithMetricsCanRunTwice(t *testing.T) {
 			t.Errorf("metrics output does not expose test_requests:\n%s", body)
 		}
 	}
+}
+
+func TestSetupWithOTLPEndpointRecordsSpans(t *testing.T) {
+	// The gRPC exporter connects lazily, so no collector is needed while no
+	// span is exported.
+	shutdown, inst, err := SetupOTelSDK(context.Background(), &config.ObservabilityConfig{ServiceName: "test", OTLPEndpoint: "127.0.0.1:4317"}, "v0")
+	if err != nil {
+		t.Fatalf("SetupOTelSDK() error = %v", err)
+	}
+	_, span := inst.Trace.Tracer("test").Start(context.Background(), "op")
+	if !span.IsRecording() {
+		t.Error("span is not recording with an OTLP endpoint configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Errorf("shutdown() error = %v", err)
+	}
+	// Ending the span after shutdown drops it instead of exporting it to the
+	// absent collector.
+	span.End()
 }
 
 func TestSetupWithoutEndpointsIsNoop(t *testing.T) {

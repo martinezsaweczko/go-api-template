@@ -5,11 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/martinezsaweczko/go-api-template/internal/config"
 	"github.com/martinezsaweczko/go-api-template/internal/model"
 	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // DummyBusinessLogicHandlerConfig holds dependencies for the dummy business logic handler

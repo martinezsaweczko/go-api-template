@@ -16,6 +16,7 @@ const (
 	DefaultJWTTokenTTL = time.Hour
 )
 
+// JWTConfig holds the JWT signing keys and token claims settings.
 type JWTConfig struct {
 	PublicKeyPath  string
 	PrivateKeyPath string

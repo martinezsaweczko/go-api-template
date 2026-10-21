@@ -1,3 +1,5 @@
+// Package app wires the configuration, logger, observability providers and
+// HTTP handlers together and runs the server with graceful shutdown.
 package app
 
 import (
@@ -31,6 +33,7 @@ type Server interface {
 	HandleFuncWithMiddleware(pattern string, handler func(http.ResponseWriter, *http.Request), middlewares ...middleware.Middleware)
 }
 
+// Handlers groups the HTTP handlers registered by the application.
 type Handlers struct {
 	metricsHandler            *handlers.MetricsHandler
 	versionHandler            *handlers.VersionHandler
@@ -40,6 +43,8 @@ type Handlers struct {
 	dummyBusinessLogicHandler *handlers.DummyBusinessLogicHandler
 }
 
+// App wires configuration, logging, observability and HTTP handlers onto a
+// Server and runs it until shutdown.
 type App struct {
 	config        *config.Config
 	server        Server
@@ -52,15 +57,19 @@ type App struct {
 	ready         atomic.Bool
 }
 
+// NewApp creates an App for cfg. Inject its dependencies with the With*
+// methods before calling Run.
 func NewApp(cfg *config.Config) *App {
 	return &App{config: cfg}
 }
 
+// WithServer sets the HTTP server and returns the app instance for chaining
 func (app *App) WithServer(server Server) *App {
 	app.server = server
 	return app
 }
 
+// WithLog sets the logger and returns the app instance for chaining
 func (app *App) WithLog(log *slog.Logger) *App {
 	app.log = log
 	return app

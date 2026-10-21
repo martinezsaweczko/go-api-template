@@ -10,12 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/metric/noop"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/martinezsaweczko/go-api-template/internal/app"
 	"github.com/martinezsaweczko/go-api-template/internal/config"
@@ -47,7 +48,9 @@ func testConfig(t *testing.T) *config.Config {
 	}
 }
 
-func get(t *testing.T, url string) *http.Response {
+// get issues a GET request, closes the body and returns the status code and
+// response headers.
+func get(t *testing.T, url string) (int, http.Header) {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(url)
@@ -55,7 +58,7 @@ func get(t *testing.T, url string) *http.Response {
 		t.Fatalf("GET %s: %v", url, err)
 	}
 	_ = resp.Body.Close()
-	return resp
+	return resp.StatusCode, resp.Header
 }
 
 func TestRunServesProbesAndShutsDownOnCancel(t *testing.T) {
@@ -68,7 +71,7 @@ func TestRunServesProbesAndShutsDownOnCancel(t *testing.T) {
 	a := app.NewApp(cfg).
 		WithServer(srv).
 		WithLog(log).
-		WithObservability(&observability.ObservabilityInst{Trace: tp, MeterProvider: noop.NewMeterProvider()}).
+		WithObservability(&observability.ObservabilityInst{Trace: tp, MeterProvider: metricnoop.NewMeterProvider()}).
 		WithBasePath("/api/v1")
 
 	if a.Ready() {
@@ -90,10 +93,11 @@ func TestRunServesProbesAndShutsDownOnCancel(t *testing.T) {
 
 	base := "http://" + srv.Addr().String()
 	for _, path := range []string{"/livez", "/readyz", "/api/v1/health"} {
-		if resp := get(t, base+path); resp.StatusCode != http.StatusOK {
-			t.Errorf("GET %s status = %d, want 200", path, resp.StatusCode)
+		status, header := get(t, base+path)
+		if status != http.StatusOK {
+			t.Errorf("GET %s status = %d, want 200", path, status)
 		}
-		if resp := get(t, base+path); resp.Header.Get("X-Request-ID") == "" {
+		if header.Get("X-Request-ID") == "" {
 			t.Errorf("GET %s has no X-Request-ID: global middleware not applied", path)
 		}
 	}
@@ -114,11 +118,11 @@ func TestRunServesProbesAndShutsDownOnCancel(t *testing.T) {
 
 // startApp runs the app on an ephemeral port until the test ends and
 // returns its base URL.
-func startApp(t *testing.T, obs *observability.ObservabilityInst) string {
+func startApp(t *testing.T, cfg *config.Config, obs *observability.ObservabilityInst) string {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := (&server.HTTPServerConfig{Address: "127.0.0.1", Port: 0, ReadHeaderTimeout: time.Second, Log: log}).New()
-	a := app.NewApp(testConfig(t)).WithServer(srv).WithLog(log).WithObservability(obs).WithBasePath("/api/v1")
+	a := app.NewApp(cfg).WithServer(srv).WithLog(log).WithObservability(obs).WithBasePath("/api/v1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -149,7 +153,7 @@ func TestRunInstrumentsRequests(t *testing.T) {
 		_ = tp.Shutdown(context.Background())
 		_ = mp.Shutdown(context.Background())
 	})
-	base := startApp(t, &observability.ObservabilityInst{Trace: tp, MeterProvider: mp, Propagator: propagation.TraceContext{}})
+	base := startApp(t, testConfig(t), &observability.ObservabilityInst{Trace: tp, MeterProvider: mp, Propagator: propagation.TraceContext{}})
 
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	req, err := http.NewRequest(http.MethodGet, base+"/api/v1/version", nil)
@@ -199,6 +203,34 @@ func TestRunInstrumentsRequests(t *testing.T) {
 		if routes[route] != 1 {
 			t.Errorf("http.server.requests{http.route=%q} = %d, want 1 (all routes: %v)", route, routes[route], routes)
 		}
+	}
+}
+
+func TestRunServesMetricsOnlyWithHandler(t *testing.T) {
+	metrics := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	tests := []struct {
+		name       string
+		handler    http.Handler
+		wantStatus int
+	}{
+		{name: "handler provided", handler: metrics, wantStatus: http.StatusTeapot},
+		{name: "no handler leaves the path unregistered", wantStatus: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.Observability.MetricsPath = "/metrics"
+			base := startApp(t, cfg, &observability.ObservabilityInst{
+				Trace:          tracenoop.NewTracerProvider(),
+				MeterProvider:  metricnoop.NewMeterProvider(),
+				MetricsHandler: tt.handler,
+			})
+			if status, _ := get(t, base+"/metrics"); status != tt.wantStatus {
+				t.Errorf("GET /metrics status = %d, want %d", status, tt.wantStatus)
+			}
+		})
 	}
 }
 

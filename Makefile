@@ -5,6 +5,9 @@ BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 APP_NAME := go-api-template
 LDFLAGS := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.appName=$(APP_NAME)
 
+# golangci-lint version used when the binary is not installed.
+GOLANGCI_LINT_VERSION ?= v2.15.0
+
 # Set FORCE=1 to overwrite existing signing keys with `make keys`.
 FORCE ?= 0
 
@@ -40,12 +43,12 @@ fmt:
 	gofmt -w .
 	go mod tidy
 
-## lint: run golangci-lint if installed
+## lint: run golangci-lint (the installed binary, or the pinned version via go run)
 lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
 	else \
-		echo "golangci-lint not installed, skipping (https://golangci-lint.run/welcome/install/)"; \
+		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...; \
 	fi
 
 ## vulncheck: scan dependencies for known vulnerabilities

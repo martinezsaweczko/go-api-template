@@ -1,3 +1,5 @@
+// Command api runs the HTTP API server. Run it with -h to list every flag
+// and its APP_ environment variable.
 package main
 
 // @title           Go API Template
@@ -18,6 +20,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -41,28 +44,29 @@ var (
 const basePath = "/api/v1"
 
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
 }
 
-// run wires and runs the application and returns the process exit code, so
-// deferred cleanups run before main exits.
-func run() int {
-	cfg, err := config.Load(os.Args[1:], os.LookupEnv)
+// run wires and runs the application with the given arguments and
+// environment and returns the process exit code, so deferred cleanups run
+// before main exits.
+func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io.Writer) int {
+	cfg, err := config.Load(args, lookupEnv)
 	if errors.Is(err, flag.ErrHelp) {
-		config.Usage(os.Stdout)
+		config.Usage(stdout)
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 1
 	}
 
 	out, closeLog, err := config.OpenLogOutput(cfg.Log.FilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error opening log file: %v\n", err)
 		return 1
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 
 	// Records logged with a request context carry trace_id and span_id.
 	log := slog.New(observability.NewTraceHandler(
