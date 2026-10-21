@@ -43,7 +43,7 @@ jobs:
           git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum is not tidy" && exit 1)
 
       - name: Build application
-        run: go build -o build/main cmd/main.go
+        run: go build -o build/main ./cmd/api
 
       - name: Run tests
         run: go test -v -race -count=1 ./...

@@ -32,19 +32,19 @@ jobs:
         run: |
           CGO_ENABLED=1 go build \
             -ldflags "-X main.version=${{ steps.tag.outputs.version }} -X main.buildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -X main.appName=go-api-template" \
-            -o build/go-api-template-linux-amd64 cmd/main.go
+            -o build/go-api-template-linux-amd64 ./cmd/api
 
       - name: Build application for macOS
         run: |
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
             -ldflags "-X main.version=${{ steps.tag.outputs.version }} -X main.buildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -X main.appName=go-api-template" \
-            -o build/go-api-template-darwin-amd64 cmd/main.go
+            -o build/go-api-template-darwin-amd64 ./cmd/api
 
       - name: Build application for Windows
         run: |
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
             -ldflags "-X main.version=${{ steps.tag.outputs.version }} -X main.buildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -X main.appName=go-api-template" \
-            -o build/go-api-template-windows-amd64.exe cmd/main.go
+            -o build/go-api-template-windows-amd64.exe ./cmd/api
 
       - name: Create Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')

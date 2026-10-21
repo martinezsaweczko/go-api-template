@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	_ "github.com/martinezsaweczko/go-api-template/docs" // This is required to serve swagger docs, it registers the swagger files with the httpSwagger handler
-	"github.com/martinezsaweczko/go-api-template/http/handlers"
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
-	"github.com/martinezsaweczko/go-api-template/services"
+	"github.com/martinezsaweczko/go-api-template/internal/service"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
@@ -75,7 +75,7 @@ func (app *App) initHandlers() error {
 	}
 
 	// Initialize the JWT service once; it is shared by the token handler and the authorization middleware
-	app.jwtService, err = services.NewJWTService(services.JWTServiceConfig{
+	app.jwtService, err = service.NewJWTService(service.JWTServiceConfig{
 		PrivateKey: app.config.JWT.PrivateKey,
 		PublicKey:  app.config.JWT.PublicKey,
 		Issuer:     app.config.JWT.Issuer,

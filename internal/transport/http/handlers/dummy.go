@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/martinezsaweczko/go-api-template/config"
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
-	"github.com/martinezsaweczko/go-api-template/model"
-	"github.com/martinezsaweczko/go-api-template/o11"
+	"github.com/martinezsaweczko/go-api-template/internal/config"
+	"github.com/martinezsaweczko/go-api-template/internal/model"
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -17,7 +17,7 @@ import (
 // DummyBusinessLogicHandlerConfig holds dependencies for the dummy business logic handler
 type DummyBusinessLogicHandlerConfig struct {
 	Log           *slog.Logger
-	Observability *o11.ObservabilityInst
+	Observability *observability.ObservabilityInst
 	Cfg           *config.Config
 	BasePath      string
 }
@@ -25,7 +25,7 @@ type DummyBusinessLogicHandlerConfig struct {
 // DummyBusinessLogicHandler handles dummy business logic requests
 type DummyBusinessLogicHandler struct {
 	log           *slog.Logger
-	observability *o11.ObservabilityInst
+	observability *observability.ObservabilityInst
 	cfg           *config.Config
 	handlerCalls  metric.Int64Counter
 	basePath      string

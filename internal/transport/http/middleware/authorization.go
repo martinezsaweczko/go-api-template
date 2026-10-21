@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/martinezsaweczko/go-api-template/services"
+	"github.com/martinezsaweczko/go-api-template/internal/service"
 )
 
 // AuthorizationMiddleware creates a middleware that verifies JWT tokens from the Authorization header
 // The token should be in the format: Authorization: Bearer <token>
-func AuthorizationMiddleware(log *slog.Logger, jwtService *services.JWTService) Middleware {
+func AuthorizationMiddleware(log *slog.Logger, jwtService *service.JWTService) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Get the Authorization header

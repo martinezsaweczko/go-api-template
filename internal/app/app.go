@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/martinezsaweczko/go-api-template/config"
-	"github.com/martinezsaweczko/go-api-template/http/handlers"
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
-	"github.com/martinezsaweczko/go-api-template/model"
-	"github.com/martinezsaweczko/go-api-template/o11"
-	"github.com/martinezsaweczko/go-api-template/services"
+	"github.com/martinezsaweczko/go-api-template/internal/config"
+	"github.com/martinezsaweczko/go-api-template/internal/model"
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
+	"github.com/martinezsaweczko/go-api-template/internal/service"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 // Server defines the interface for any HTTP server implementation
@@ -46,9 +46,9 @@ type App struct {
 	config        *config.Config
 	server        Server
 	log           *slog.Logger
-	observability *o11.ObservabilityInst
+	observability *observability.ObservabilityInst
 	handlers      *Handlers
-	jwtService    *services.JWTService
+	jwtService    *service.JWTService
 	buildInfo     model.BuildInfo
 	basePath      string
 }
@@ -71,7 +71,7 @@ func (app *App) WithLog(log *slog.Logger) *App {
 }
 
 // WithObservability allows setting up observability providers (tracing, metrics) and returns the app instance for chaining
-func (app *App) WithObservability(observability *o11.ObservabilityInst) *App {
+func (app *App) WithObservability(observability *observability.ObservabilityInst) *App {
 	// Set up OpenTelemetry providers here if needed
 	app.observability = observability
 	return app

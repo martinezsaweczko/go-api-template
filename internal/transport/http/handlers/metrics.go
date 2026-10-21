@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/martinezsaweczko/go-api-template/config"
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
-	"github.com/martinezsaweczko/go-api-template/o11"
+	"github.com/martinezsaweczko/go-api-template/internal/config"
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 // Handler is an alias for http.Handler
@@ -16,13 +16,13 @@ type Handler = http.Handler
 
 type MetricsHandlerConfig struct {
 	Log           *slog.Logger
-	Observability *o11.ObservabilityInst
+	Observability *observability.ObservabilityInst
 	Cfg           *config.Config
 }
 
 type MetricsHandler struct {
 	log           *slog.Logger
-	observability *o11.ObservabilityInst
+	observability *observability.ObservabilityInst
 	cfg           *config.Config
 }
 

@@ -14,10 +14,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/martinezsaweczko/go-api-template/http/handlers"
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
-	"github.com/martinezsaweczko/go-api-template/model"
-	"github.com/martinezsaweczko/go-api-template/o11"
+	"github.com/martinezsaweczko/go-api-template/internal/model"
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 const testBasePath = "/api/v1"
@@ -45,7 +45,7 @@ func discardLogger() *slog.Logger {
 
 // newTestObservability returns an observability instance backed by an
 // in-memory metric reader so tests can assert recorded metrics.
-func newTestObservability(t *testing.T) (*o11.ObservabilityInst, *sdkmetric.ManualReader) {
+func newTestObservability(t *testing.T) (*observability.ObservabilityInst, *sdkmetric.ManualReader) {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -54,7 +54,7 @@ func newTestObservability(t *testing.T) (*o11.ObservabilityInst, *sdkmetric.Manu
 		_ = mp.Shutdown(context.Background())
 		_ = tp.Shutdown(context.Background())
 	})
-	return &o11.ObservabilityInst{Trace: tp, MeterProvider: mp}, reader
+	return &observability.ObservabilityInst{Trace: tp, MeterProvider: mp}, reader
 }
 
 // counterTotal returns the sum of all data points of the named Int64 counter.
@@ -99,7 +99,7 @@ func (w *failingWriter) WriteHeader(code int) { w.statusCodes = append(w.statusC
 
 func (w *failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
 
-func newVersionHandler(t *testing.T, obs *o11.ObservabilityInst) *handlers.VersionHandler {
+func newVersionHandler(t *testing.T, obs *observability.ObservabilityInst) *handlers.VersionHandler {
 	t.Helper()
 	cfg := handlers.VersionHandlerConfig{
 		Log:           discardLogger(),

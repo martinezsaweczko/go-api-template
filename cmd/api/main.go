@@ -22,12 +22,12 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	"github.com/martinezsaweczko/go-api-template/app"
-	"github.com/martinezsaweczko/go-api-template/config"
 	"github.com/martinezsaweczko/go-api-template/docs"
-	"github.com/martinezsaweczko/go-api-template/http_server"
-	"github.com/martinezsaweczko/go-api-template/model"
-	"github.com/martinezsaweczko/go-api-template/o11"
+	"github.com/martinezsaweczko/go-api-template/internal/app"
+	"github.com/martinezsaweczko/go-api-template/internal/config"
+	"github.com/martinezsaweczko/go-api-template/internal/model"
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/server"
 )
 
 // Buildinfo variables set via LDFlags in the Makefile
@@ -64,7 +64,7 @@ func main() {
 	executionID, _ := uuid.NewV4()
 	log = log.With("execution_id", executionID)
 
-	httpConf := &http_server.HTTPServerConfig{
+	httpConf := &server.HTTPServerConfig{
 		Addr:         cfg.HttpServer.Address,
 		Port:         cfg.HttpServer.Port,
 		Timeout:      cfg.HttpServer.Timeout,
@@ -78,7 +78,7 @@ func main() {
 	log.Info("Configuration loaded", "http_address", httpConf.Addr, "http_port", httpConf.Port, "http_timeout", httpConf.Timeout, "http_read_timeout", httpConf.ReadTimeout, "http_write_timeout", httpConf.WriteTimeout, "log_level", cfg.Log.Level, "log_file_path", cfg.Log.FilePath)
 
 	// Set up OpenTelemetry providers.
-	otelShutdown, observabilityInst, otelErr := o11.SetupOTelSDK(ctx, &cfg.O11)
+	otelShutdown, observabilityInst, otelErr := observability.SetupOTelSDK(ctx, &cfg.O11)
 	if otelErr != nil {
 		log.Error("OpenTelemetry setup error", "error", otelErr)
 		os.Exit(1)

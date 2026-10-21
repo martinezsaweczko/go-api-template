@@ -1,4 +1,4 @@
-package http_server
+package server
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 // Server wraps the standard net/http server implementation

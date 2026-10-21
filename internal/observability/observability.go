@@ -1,11 +1,11 @@
-package o11
+package observability
 
 import (
 	"context"
 	"errors"
 	"time"
 
-	"github.com/martinezsaweczko/go-api-template/config"
+	"github.com/martinezsaweczko/go-api-template/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"

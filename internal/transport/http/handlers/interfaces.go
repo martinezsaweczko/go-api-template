@@ -3,7 +3,7 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/martinezsaweczko/go-api-template/http/middleware"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 type Router interface {

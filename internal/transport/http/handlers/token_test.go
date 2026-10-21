@@ -10,18 +10,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/martinezsaweczko/go-api-template/http/handlers"
-	"github.com/martinezsaweczko/go-api-template/model"
-	"github.com/martinezsaweczko/go-api-template/services"
+	"github.com/martinezsaweczko/go-api-template/internal/model"
+	"github.com/martinezsaweczko/go-api-template/internal/service"
+	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
 )
 
-func newTestJWTService(t *testing.T) *services.JWTService {
+func newTestJWTService(t *testing.T) *service.JWTService {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate RSA key: %v", err)
 	}
-	svc, err := services.NewJWTService(services.JWTServiceConfig{
+	svc, err := service.NewJWTService(service.JWTServiceConfig{
 		PrivateKey: key,
 		PublicKey:  &key.PublicKey,
 		Issuer:     "go-api-template",

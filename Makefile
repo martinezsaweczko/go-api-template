@@ -14,7 +14,7 @@ all: check test build
 
 ## build: compile the application into build/main (never touches keys or docs)
 build:
-	go build -ldflags "$(LDFLAGS)" -o build/main ./cmd
+	go build -ldflags "$(LDFLAGS)" -o build/main ./cmd/api
 
 ## run: build and run the application
 run: build
@@ -54,7 +54,7 @@ vulncheck:
 
 ## swagger: regenerate the OpenAPI docs in docs/
 swagger:
-	swag init -g cmd/main.go -o docs
+	swag init -g cmd/api/main.go -o docs
 
 ## clean: remove build artifacts
 clean:
