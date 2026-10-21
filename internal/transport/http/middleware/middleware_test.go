@@ -90,6 +90,39 @@ func TestRecoveryAfterResponseStartedAbortsWithoutSecondBody(t *testing.T) {
 	}
 }
 
+func TestRecoveryAfterImplicitHeaderWriteAbortsWithoutSecondBody(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+	h := middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// No explicit WriteHeader: the first Write commits an implicit 200.
+		_, _ = io.WriteString(w, "partial")
+		panic("boom")
+	}))
+	rec := httptest.NewRecorder()
+
+	func() {
+		defer func() {
+			if err, _ := recover().(error); !errors.Is(err, http.ErrAbortHandler) {
+				t.Errorf("recovered %v, want http.ErrAbortHandler", err)
+			}
+		}()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	}()
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want implicit 200", rec.Code)
+	}
+	if body := rec.Body.String(); body != "partial" {
+		t.Errorf("body = %q, want only the handler output without a JSON error", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "application/json" {
+		t.Errorf("Content-Type = %q, want the error response not to be written", ct)
+	}
+	if !strings.Contains(logs.String(), `"response_started":true`) {
+		t.Errorf("log does not record response_started=true: %q", logs.String())
+	}
+}
+
 func TestRecoveryRepanicsAbortHandler(t *testing.T) {
 	h := middleware.Recovery(discardLogger())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic(http.ErrAbortHandler)
