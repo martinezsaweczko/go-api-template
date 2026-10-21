@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -60,6 +61,10 @@ func LoadConfig() (*Config, *ConfigError) {
 	// Define command-line flags for JWT configuration
 	var jwtPublicKeyPath string
 	var jwtPrivateKeyPath string
+	var jwtIssuer string
+	var jwtAudience string
+	var jwtTokenTTL time.Duration
+	var jwtDevTokenEndpoint bool
 
 	// Flags server
 	flag.StringVar(&serverAddress, "http-address", "localhost", "HTTP server address")
@@ -79,6 +84,10 @@ func LoadConfig() (*Config, *ConfigError) {
 	// JWT flags
 	flag.StringVar(&jwtPublicKeyPath, "jwt-public-key-path", "keys/public.pem", "Path to JWT public key file")
 	flag.StringVar(&jwtPrivateKeyPath, "jwt-private-key-path", "keys/private.pem", "Path to JWT private key file")
+	flag.StringVar(&jwtIssuer, "jwt-issuer", DefaultJWTIssuer, "JWT issuer set on and required from tokens")
+	flag.StringVar(&jwtAudience, "jwt-audience", "", "JWT audience set on and required from tokens (empty disables the audience check)")
+	flag.DurationVar(&jwtTokenTTL, "jwt-token-ttl", DefaultJWTTokenTTL, "Lifetime of issued JWT tokens")
+	flag.BoolVar(&jwtDevTokenEndpoint, "jwt-dev-token-endpoint", false, "Enable the unauthenticated POST /token endpoint (development only)")
 
 	flag.Parse()
 
@@ -113,8 +122,12 @@ func LoadConfig() (*Config, *ConfigError) {
 
 	// Set JWT configuration
 	config.JWT = JWTConfig{
-		PublicKeyPath:  jwtPublicKeyPath,
-		PrivateKeyPath: jwtPrivateKeyPath,
+		PublicKeyPath:    jwtPublicKeyPath,
+		PrivateKeyPath:   jwtPrivateKeyPath,
+		Issuer:           jwtIssuer,
+		Audience:         jwtAudience,
+		TokenTTL:         jwtTokenTTL,
+		DevTokenEndpoint: jwtDevTokenEndpoint,
 	}
 
 	if err := config.JWT.LoadKeys(); err != nil {

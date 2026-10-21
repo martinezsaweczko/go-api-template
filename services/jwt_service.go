@@ -9,10 +9,26 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Claims represents the JWT claims
+// signingMethod is the only algorithm accepted for issuing and verifying tokens.
+var signingMethod = jwt.SigningMethodRS256
+
+// Claims represents the JWT claims. The subject is carried by the embedded
+// RegisteredClaims, so GetSubject() returns it.
 type Claims struct {
 	jwt.RegisteredClaims
-	Subject string `json:"sub"`
+}
+
+// JWTServiceConfig holds the dependencies and settings for JWTService
+type JWTServiceConfig struct {
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
+	// Issuer is set on issued tokens and, when non-empty, required on verified tokens.
+	Issuer string
+	// Audience is set on issued tokens and, when non-empty, required on verified tokens.
+	Audience string
+	// TTL is the lifetime of issued tokens.
+	TTL time.Duration
+	Log *slog.Logger
 }
 
 // JWTService provides JWT token creation and verification
@@ -20,19 +36,49 @@ type JWTService struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	issuer     string
-	expiryTime time.Duration
+	audience   string
+	ttl        time.Duration
+	parser     *jwt.Parser
 	log        *slog.Logger
 }
 
-// NewJWTService creates a new JWT service with the given keys
-func NewJWTService(privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey, issuer string, expiryTime time.Duration) *JWTService {
-	return &JWTService{
-		privateKey: privateKey,
-		publicKey:  publicKey,
-		issuer:     issuer,
-		log:        slog.Default(),
-		expiryTime: expiryTime,
+// NewJWTService creates a new JWT service with the given keys and settings
+func NewJWTService(cfg JWTServiceConfig) (*JWTService, error) {
+	if cfg.PrivateKey == nil {
+		return nil, fmt.Errorf("JWT private key is required")
 	}
+	if cfg.PublicKey == nil {
+		return nil, fmt.Errorf("JWT public key is required")
+	}
+	if cfg.TTL <= 0 {
+		return nil, fmt.Errorf("JWT token TTL must be positive")
+	}
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+
+	opts := []jwt.ParserOption{
+		jwt.WithValidMethods([]string{signingMethod.Alg()}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+	}
+	if cfg.Issuer != "" {
+		opts = append(opts, jwt.WithIssuer(cfg.Issuer))
+	}
+	if cfg.Audience != "" {
+		opts = append(opts, jwt.WithAudience(cfg.Audience))
+	}
+
+	return &JWTService{
+		privateKey: cfg.PrivateKey,
+		publicKey:  cfg.PublicKey,
+		issuer:     cfg.Issuer,
+		audience:   cfg.Audience,
+		ttl:        cfg.TTL,
+		parser:     jwt.NewParser(opts...),
+		log:        log,
+	}, nil
 }
 
 // GenerateToken generates a new JWT token with the given subject
@@ -42,19 +88,20 @@ func (s *JWTService) GenerateToken(subject string) (string, error) {
 	}
 
 	now := time.Now()
-	expiryTime := now.Add(s.expiryTime)
-
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiryTime),
-			IssuedAt:  jwt.NewNumericDate(now),
+			Subject:   subject,
 			Issuer:    s.issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
 		},
-		Subject: subject,
+	}
+	if s.audience != "" {
+		claims.Audience = jwt.ClaimStrings{s.audience}
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tokenString, err := token.SignedString(s.privateKey)
+	tokenString, err := jwt.NewWithClaims(signingMethod, claims).SignedString(s.privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
@@ -62,50 +109,24 @@ func (s *JWTService) GenerateToken(subject string) (string, error) {
 	return tokenString, nil
 }
 
-// VerifyToken verifies a JWT token and returns the claims if valid
+// VerifyToken verifies a JWT token and returns the claims if valid.
+// Only RS256 tokens signed by the configured key, with an expiration and the
+// configured issuer and audience, are accepted.
 func (s *JWTService) VerifyToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
-	s.log.Debug("Starting token verification")
 
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		// Verify the signing method
-		signingMethod := fmt.Sprintf("%v", token.Header["alg"])
-		s.log.Debug("Verifying signing method", "method", signingMethod)
-
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			s.log.Error("Invalid signing method", "method", signingMethod, "expected", "RS256")
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-
-		s.log.Debug("Signing method verified", "method", signingMethod)
+	token, err := s.parser.ParseWithClaims(tokenString, claims, func(*jwt.Token) (any, error) {
 		return s.publicKey, nil
 	})
-
 	if err != nil {
-		s.log.Error("Failed to parse token", "error", err.Error())
-		return nil, fmt.Errorf("failed to parse token: %w", err)
+		s.log.Debug("Token rejected", "error", err)
+		return nil, fmt.Errorf("invalid token: %w", err)
 	}
-
-	s.log.Debug("Token parsed successfully", "valid", token.Valid)
-
 	if !token.Valid {
-		s.log.Error("Token is invalid", "registered_claims", fmt.Sprintf("%+v", claims.RegisteredClaims))
+		s.log.Debug("Token rejected", "error", "token not valid")
 		return nil, fmt.Errorf("invalid token")
 	}
 
-	// Additional validation
-	now := time.Now()
-	if claims.ExpiresAt != nil {
-		expiryTime := claims.ExpiresAt.Time
-		s.log.Debug("Token expiration check", "expires_at", expiryTime, "now", now, "expired", expiryTime.Before(now))
-	}
-
-	if claims.IssuedAt != nil {
-		issuedTime := claims.IssuedAt.Time
-		s.log.Debug("Token issued at", "issued_at", issuedTime)
-	}
-
-	s.log.Debug("Token verified successfully", "subject", claims.Subject, "issuer", claims.Issuer)
-
+	s.log.Debug("Token verified", "subject", claims.Subject, "issuer", claims.Issuer)
 	return claims, nil
 }

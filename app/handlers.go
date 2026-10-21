@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"time"
 
 	_ "github.com/martinezsaweczko/go-api-template/docs" // This is required to serve swagger docs, it registers the swagger files with the httpSwagger handler
 	"github.com/martinezsaweczko/go-api-template/http/handlers"
@@ -75,31 +74,34 @@ func (app *App) initHandlers() error {
 		return err
 	}
 
-	// Initialize JWT service
-	if app.config.JWT.PublicKey == nil || app.config.JWT.PrivateKey == nil {
-		app.log.Error("JWT keys not loaded from configuration")
-		return fmt.Errorf("JWT keys not available")
-	}
-
-	jwtService := services.NewJWTService(
-		app.config.JWT.PrivateKey,
-		app.config.JWT.PublicKey,
-		"go-api-template",
-		24*time.Hour, // Token expiry
-	)
-
-	// Initialize token handler
-	tokenHandlerConf := handlers.TokenHandlerConfig{
-		Log:           app.log,
-		Observability: app.observability,
-		Cfg:           app.config,
-		JWTService:    jwtService,
-		BasePath:      app.basePath,
-	}
-	app.handlers.tokenHandler, err = tokenHandlerConf.NewTokenHandler()
+	// Initialize the JWT service once; it is shared by the token handler and the authorization middleware
+	app.jwtService, err = services.NewJWTService(services.JWTServiceConfig{
+		PrivateKey: app.config.JWT.PrivateKey,
+		PublicKey:  app.config.JWT.PublicKey,
+		Issuer:     app.config.JWT.Issuer,
+		Audience:   app.config.JWT.Audience,
+		TTL:        app.config.JWT.TokenTTL,
+		Log:        app.log,
+	})
 	if err != nil {
-		app.log.Error("Failed to initialize token handler", "error", err)
-		return err
+		app.log.Error("Failed to initialize JWT service", "error", err)
+		return fmt.Errorf("failed to initialize JWT service: %w", err)
+	}
+
+	// Initialize the token handler only when the development token endpoint is enabled
+	if app.config.JWT.DevTokenEndpoint {
+		tokenHandlerConf := handlers.TokenHandlerConfig{
+			Log:           app.log,
+			Observability: app.observability,
+			Cfg:           app.config,
+			JWTService:    app.jwtService,
+			BasePath:      app.basePath,
+		}
+		app.handlers.tokenHandler, err = tokenHandlerConf.NewTokenHandler()
+		if err != nil {
+			app.log.Error("Failed to initialize token handler", "error", err)
+			return err
+		}
 	}
 
 	return nil
@@ -110,15 +112,8 @@ func (app *App) registerRoutes() {
 	// Define middleware chains for different endpoints
 	loggingMiddleware := middleware.LoggingMiddleware(app.log)
 
-	// Create JWT service from config (same as in initHandlers)
-	jwtService := services.NewJWTService(
-		app.config.JWT.PrivateKey,
-		app.config.JWT.PublicKey,
-		"go-api-template",
-		24*time.Hour,
-	)
 	// Create authorization middleware for protected endpoints
-	authorizationMiddleware := middleware.AuthorizationMiddleware(app.log, jwtService)
+	authorizationMiddleware := middleware.AuthorizationMiddleware(app.log, app.jwtService)
 
 	// Register metrics handler (no middleware)
 	if app.config.O11.PrometheusPath != "" {
@@ -132,8 +127,12 @@ func (app *App) registerRoutes() {
 	// Register version handler with logging middleware
 	app.handlers.versionHandler.RegisterRoutes(app.server, loggingMiddleware)
 
-	// Register token handler with logging middleware (no authorization required for token creation)
-	app.handlers.tokenHandler.RegisterRoutes(app.server, loggingMiddleware)
+	// Register the unauthenticated token handler only when explicitly enabled for development
+	if app.handlers.tokenHandler != nil {
+		app.log.Warn("Development token endpoint enabled: anyone can mint tokens; never enable it in production",
+			"path", app.basePath+"/token")
+		app.handlers.tokenHandler.RegisterRoutes(app.server, loggingMiddleware)
+	}
 
 	// Register dummy business logic handler with logging and authorization middleware
 	app.handlers.dummyBusinessLogicHandler.RegisterRoutes(app.server, loggingMiddleware, authorizationMiddleware)

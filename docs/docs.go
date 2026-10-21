@@ -84,7 +84,7 @@ const docTemplate = `{
         },
         "/token": {
             "post": {
-                "description": "Generate a new JWT token with the given subject",
+                "description": "Mint a JWT for the given subject without authentication. Development only: the route is registered only when the -jwt-dev-token-endpoint flag is enabled and must never be enabled in production.",
                 "consumes": [
                     "application/json"
                 ],
@@ -94,7 +94,7 @@ const docTemplate = `{
                 "tags": [
                     "auth"
                 ],
-                "summary": "Create JWT token",
+                "summary": "Create JWT token (development only)",
                 "parameters": [
                     {
                         "description": "Token request",
