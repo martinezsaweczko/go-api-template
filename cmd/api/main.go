@@ -47,7 +47,7 @@ func main() {
 // run wires and runs the application and returns the process exit code, so
 // deferred cleanups run before main exits.
 func run() int {
-	cfg, err := config.Load(os.Args[1:], os.Getenv)
+	cfg, err := config.Load(os.Args[1:], os.LookupEnv)
 	if errors.Is(err, flag.ErrHelp) {
 		config.Usage(os.Stdout)
 		return 0
@@ -64,7 +64,10 @@ func run() int {
 	}
 	defer closeLog()
 
-	log := slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: config.ParseLogLevel(cfg.Log.Level)}))
+	// Records logged with a request context carry trace_id and span_id.
+	log := slog.New(observability.NewTraceHandler(
+		slog.NewJSONHandler(out, &slog.HandlerOptions{Level: config.ParseLogLevel(cfg.Log.Level)}),
+	))
 
 	log.Info("Build info", "version", version, "build_time", buildTime, "app_name", appName)
 	log.Info("Configuration loaded",

@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
-	"github.com/martinezsaweczko/go-api-template/internal/config"
+	promclient "github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -21,6 +24,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
 	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/martinezsaweczko/go-api-template/internal/config"
 )
 
 // ObservabilityInst holds the providers the HTTP layer instruments with.
@@ -33,6 +38,9 @@ type ObservabilityInst struct {
 	MeterProvider metric.MeterProvider
 	// Propagator extracts and injects W3C trace context and baggage.
 	Propagator propagation.TextMapPropagator
+	// MetricsHandler serves the Prometheus exposition of MeterProvider, or
+	// is nil when metrics are disabled.
+	MetricsHandler http.Handler
 }
 
 // SetupOTelSDK bootstraps the OpenTelemetry pipeline and registers the
@@ -76,12 +84,13 @@ func SetupOTelSDK(ctx context.Context, cfg *config.ObservabilityConfig, serviceV
 	// Metrics are exposed only through the Prometheus endpoint, so they are
 	// a no-op when no metrics path is configured.
 	if cfg.MetricsPath != "" {
-		meterProvider, err := newMeterProvider(res)
+		meterProvider, metricsHandler, err := newMeterProvider(res)
 		if err != nil {
 			return shutdown, inst, errors.Join(err, shutdown(ctx))
 		}
 		shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 		inst.MeterProvider = meterProvider
+		inst.MetricsHandler = metricsHandler
 	} else {
 		inst.MeterProvider = metricnoop.NewMeterProvider()
 	}
@@ -129,16 +138,27 @@ func newTracerProvider(ctx context.Context, endpoint string, res *resource.Resou
 	), nil
 }
 
-func newMeterProvider(res *resource.Resource) (*sdkmetric.MeterProvider, error) {
-	// The Prometheus exporter is both a metric Reader and a
-	// prometheus.Collector registered on the default registry served by
-	// promhttp.Handler().
-	exporter, err := prometheus.New()
-	if err != nil {
-		return nil, fmt.Errorf("create Prometheus exporter: %w", err)
+// newMeterProvider returns a meter provider exported through Prometheus and
+// the handler serving it. The exporter is both a metric Reader and a
+// prometheus.Collector; it is registered on a dedicated registry (with the Go
+// runtime and process collectors) rather than the global default one, so the
+// pipeline can be set up more than once per process, for example in tests.
+func newMeterProvider(res *resource.Resource) (*sdkmetric.MeterProvider, http.Handler, error) {
+	registry := promclient.NewRegistry()
+	if err := registry.Register(collectors.NewGoCollector()); err != nil {
+		return nil, nil, fmt.Errorf("register Go collector: %w", err)
 	}
-	return sdkmetric.NewMeterProvider(
+	if err := registry.Register(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})); err != nil {
+		return nil, nil, fmt.Errorf("register process collector: %w", err)
+	}
+
+	exporter, err := prometheus.New(prometheus.WithRegisterer(registry))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create Prometheus exporter: %w", err)
+	}
+	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(exporter),
 		sdkmetric.WithResource(res),
-	), nil
+	)
+	return mp, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), nil
 }

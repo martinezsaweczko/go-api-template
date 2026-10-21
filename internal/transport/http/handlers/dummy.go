@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -73,10 +72,8 @@ func (d *DummyBusinessLogicHandler) dummy(w http.ResponseWriter, r *http.Request
 		Status: "ok",
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	if err := writeJSON(w, http.StatusOK, response); err != nil {
 		span.RecordError(err)
-		d.log.ErrorContext(ctx, "Failed to encode response", "error", err)
+		d.log.ErrorContext(ctx, "Failed to send response", "error", err)
 	}
 }

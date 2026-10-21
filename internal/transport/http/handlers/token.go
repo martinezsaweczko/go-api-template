@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,7 +69,7 @@ func (t *TokenHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	// Only allow POST requests
 	if r.Method != http.MethodPost {
 		t.log.WarnContext(ctx, "Invalid HTTP method for token endpoint", "method", r.Method)
-		writeJSON(w, http.StatusMethodNotAllowed, model.ErrorResponse{Error: "method not allowed"})
+		t.respond(ctx, w, http.StatusMethodNotAllowed, model.ErrorResponse{Error: "method not allowed"})
 		return
 	}
 
@@ -81,14 +82,14 @@ func (t *TokenHandler) createToken(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &maxErr) {
 			status, message = http.StatusRequestEntityTooLarge, "request body too large"
 		}
-		writeJSON(w, status, model.ErrorResponse{Error: message})
+		t.respond(ctx, w, status, model.ErrorResponse{Error: message})
 		return
 	}
 
 	// Validate the request
 	if req.Subject == "" {
 		t.log.WarnContext(ctx, "Subject is empty in token request")
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse{Error: "subject is required"})
+		t.respond(ctx, w, http.StatusBadRequest, model.ErrorResponse{Error: "subject is required"})
 		return
 	}
 
@@ -96,17 +97,17 @@ func (t *TokenHandler) createToken(w http.ResponseWriter, r *http.Request) {
 	token, err := t.jwtService.GenerateToken(req.Subject)
 	if err != nil {
 		t.log.ErrorContext(ctx, "Failed to generate token", "error", err.Error(), "subject", req.Subject)
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse{Error: "failed to generate token"})
+		t.respond(ctx, w, http.StatusInternalServerError, model.ErrorResponse{Error: "failed to generate token"})
 		return
 	}
 
 	t.log.InfoContext(ctx, "Token generated successfully", "subject", req.Subject)
-	writeJSON(w, http.StatusOK, model.TokenResponse{Token: token})
+	t.respond(ctx, w, http.StatusOK, model.TokenResponse{Token: token})
 }
 
-// writeJSON writes v as a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+// respond writes v as JSON and logs a failure to send it.
+func (t *TokenHandler) respond(ctx context.Context, w http.ResponseWriter, status int, v any) {
+	if err := writeJSON(w, status, v); err != nil {
+		t.log.ErrorContext(ctx, "Failed to send token response", "error", err)
+	}
 }

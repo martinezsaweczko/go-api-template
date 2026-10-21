@@ -5,40 +5,37 @@ import (
 	"net/http"
 
 	"github.com/martinezsaweczko/go-api-template/internal/config"
-	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
-// Router defines the interface for registering routes
+// SwaggerPath is the route prefix serving the Swagger UI and OpenAPI document.
+const SwaggerPath = "/swagger/"
+
+// SwaggerHandlerConfig holds dependencies for the swagger handler.
 type SwaggerHandlerConfig struct {
-	Log           *slog.Logger
-	Observability *observability.ObservabilityInst
-	Cfg           *config.Config
+	Log *slog.Logger
+	Cfg *config.Config
 }
 
+// SwaggerHandler registers the Swagger UI route.
 type SwaggerHandler struct {
-	log           *slog.Logger
-	observability *observability.ObservabilityInst
-	cfg           *config.Config
+	log *slog.Logger
+	cfg *config.Config
 }
 
 // NewSwaggerHandler creates a new swagger handler
 func (s *SwaggerHandlerConfig) NewSwaggerHandler() *SwaggerHandler {
-	// This is a wrapper to simplify imports in the app package
-	swaggerHandler := &SwaggerHandler{
-		log:           s.Log,
-		observability: s.Observability,
-		cfg:           s.Cfg,
+	return &SwaggerHandler{
+		log: s.Log,
+		cfg: s.Cfg,
 	}
-	return swaggerHandler
 }
 
-// Register the routes for the swagger handler
+// RegisterRoutes serves handler for every path under SwaggerPath.
 func (s *SwaggerHandler) RegisterRoutes(router Router, handler http.Handler, middlewares ...middleware.Middleware) {
-	// Register the swagger handler route with wildcard to serve swagger files
 	if len(middlewares) > 0 {
-		router.HandleWithMiddleware("GET /swagger/", handler, middlewares...)
+		router.HandleWithMiddleware("GET "+SwaggerPath, handler, middlewares...)
 	} else {
-		router.Handle("GET /swagger/", handler)
+		router.Handle("GET "+SwaggerPath, handler)
 	}
 }

@@ -58,6 +58,38 @@ func TestRecoveryTurnsPanicInto500JSON(t *testing.T) {
 	}
 }
 
+func TestRecoveryAfterResponseStartedAbortsWithoutSecondBody(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+	h := middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, "partial")
+		panic("boom")
+	}))
+	rec := httptest.NewRecorder()
+
+	func() {
+		defer func() {
+			// The response cannot be fixed once started, so the connection is
+			// aborted instead of appending an error body.
+			if got := recover(); got != http.ErrAbortHandler {
+				t.Errorf("recovered %v, want http.ErrAbortHandler", got)
+			}
+		}()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	}()
+
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want original 202", rec.Code)
+	}
+	if body := rec.Body.String(); body != "partial" {
+		t.Errorf("body = %q, want only the handler output", body)
+	}
+	if !strings.Contains(logs.String(), "boom") {
+		t.Errorf("panic was not logged: %q", logs.String())
+	}
+}
+
 func TestRecoveryRepanicsAbortHandler(t *testing.T) {
 	h := middleware.Recovery(discardLogger())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic(http.ErrAbortHandler)

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -67,9 +66,7 @@ func (v *VersionHandler) getVersion(w http.ResponseWriter, r *http.Request) {
 		BuildTime: v.appBuildInfo.BuildTime,
 		AppName:   v.appBuildInfo.AppName,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(versionInfo); err != nil {
-		v.log.ErrorContext(r.Context(), "Failed to encode version information", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if err := writeJSON(w, http.StatusOK, versionInfo); err != nil {
+		v.log.ErrorContext(r.Context(), "Failed to send version information", "error", err)
 	}
 }

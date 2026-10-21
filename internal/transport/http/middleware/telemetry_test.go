@@ -1,11 +1,15 @@
 package middleware_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -14,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
@@ -160,6 +165,57 @@ func TestTracingParentsHandlerSpansUnderServerSpan(t *testing.T) {
 	}
 	if route != "/items/{id}" {
 		t.Errorf("http.route = %q, want /items/{id}", route)
+	}
+}
+
+func TestTracingNilPropagatorUsesGlobal(t *testing.T) {
+	prev := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(prev) })
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	h := middleware.Tracing(tp, nil)(okHandler())
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(spans))
+	}
+	if got := spans[0].SpanContext().TraceID().String(); got != traceID {
+		t.Errorf("trace ID = %s, want %s extracted by the global propagator", got, traceID)
+	}
+}
+
+func TestLoggingCorrelatesWithServerSpan(t *testing.T) {
+	tp := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	var logs bytes.Buffer
+	log := slog.New(observability.NewTraceHandler(slog.NewJSONHandler(&logs, nil)))
+	var spanCtx trace.SpanContext
+	h := middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spanCtx = trace.SpanContextFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), middleware.Tracing(tp, propagation.TraceContext{}), middleware.Logging(log))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/items", nil))
+
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode access log %q: %v", logs.String(), err)
+	}
+	if !spanCtx.IsValid() {
+		t.Fatal("handler saw no valid span")
+	}
+	if entry["trace_id"] != spanCtx.TraceID().String() || entry["span_id"] != spanCtx.SpanID().String() {
+		t.Errorf("access log trace_id/span_id = %v/%v, want %s/%s",
+			entry["trace_id"], entry["span_id"], spanCtx.TraceID(), spanCtx.SpanID())
 	}
 }
 

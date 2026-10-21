@@ -38,7 +38,9 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// failingWriter is a ResponseWriter whose body writes always fail.
+// failingWriter is a ResponseWriter whose body writes always fail. Like
+// net/http, the first Write sends an implicit 200 when no status was written,
+// and every WriteHeader call is recorded so superfluous ones are visible.
 type failingWriter struct {
 	header      http.Header
 	statusCodes []int
@@ -53,7 +55,12 @@ func (w *failingWriter) Header() http.Header {
 
 func (w *failingWriter) WriteHeader(code int) { w.statusCodes = append(w.statusCodes, code) }
 
-func (w *failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+func (w *failingWriter) Write([]byte) (int, error) {
+	if len(w.statusCodes) == 0 {
+		w.statusCodes = append(w.statusCodes, http.StatusOK)
+	}
+	return 0, errors.New("write failed")
+}
 
 func newVersionHandler() *handlers.VersionHandler {
 	cfg := handlers.VersionHandlerConfig{
@@ -84,13 +91,35 @@ func TestVersionHandler_Success(t *testing.T) {
 }
 
 func TestVersionHandler_EncodeErrorReturns500(t *testing.T) {
+	handlers.SetMarshalJSON(t, func(any) ([]byte, error) { return nil, errors.New("marshal failed") })
+	router := newTestRouter()
+	newVersionHandler().RegisterRoutes(router)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, testBasePath+"/version", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body model.HTTPError
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || body.Message == "" {
+		t.Errorf("body = %+v (decode err %v), want a JSON error message", body, err)
+	}
+}
+
+func TestVersionHandler_WriteErrorSendsNoSecondStatus(t *testing.T) {
 	router := newTestRouter()
 	newVersionHandler().RegisterRoutes(router)
 
 	w := &failingWriter{}
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, testBasePath+"/version", nil))
 
-	if !slices.Equal(w.statusCodes, []int{http.StatusInternalServerError}) {
-		t.Errorf("status codes written = %v, want [500]", w.statusCodes)
+	// Once the body write started the status is on the wire; a later
+	// WriteHeader(500) would be superfluous and never reach the client.
+	if !slices.Equal(w.statusCodes, []int{http.StatusOK}) {
+		t.Errorf("status codes written = %v, want [200]", w.statusCodes)
 	}
 }

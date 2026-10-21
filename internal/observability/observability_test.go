@@ -2,6 +2,9 @@ package observability
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -56,6 +59,35 @@ func TestNewResourceConfigOverridesEnv(t *testing.T) {
 	}
 }
 
+func TestSetupWithMetricsCanRunTwice(t *testing.T) {
+	cfg := &config.ObservabilityConfig{ServiceName: "test", MetricsPath: "/metrics"}
+	for i := range 2 {
+		shutdown, inst, err := SetupOTelSDK(context.Background(), cfg, "v0")
+		if err != nil {
+			t.Fatalf("SetupOTelSDK() call %d error = %v", i+1, err)
+		}
+		t.Cleanup(func() { _ = shutdown(context.Background()) })
+
+		counter, err := inst.MeterProvider.Meter("test").Int64Counter("test.requests")
+		if err != nil {
+			t.Fatalf("create counter: %v", err)
+		}
+		counter.Add(context.Background(), 1)
+
+		if inst.MetricsHandler == nil {
+			t.Fatal("MetricsHandler is nil with a metrics path configured")
+		}
+		rec := httptest.NewRecorder()
+		inst.MetricsHandler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /metrics status = %d, want 200", rec.Code)
+		}
+		if body := rec.Body.String(); !strings.Contains(body, "test_requests") {
+			t.Errorf("metrics output does not expose test_requests:\n%s", body)
+		}
+	}
+}
+
 func TestSetupWithoutEndpointsIsNoop(t *testing.T) {
 	shutdown, inst, err := SetupOTelSDK(context.Background(), &config.ObservabilityConfig{ServiceName: "test"}, "v0")
 	if err != nil {
@@ -86,5 +118,8 @@ func TestSetupWithoutEndpointsIsNoop(t *testing.T) {
 	}
 	if inst.Propagator == nil {
 		t.Error("Propagator is nil")
+	}
+	if inst.MetricsHandler != nil {
+		t.Error("MetricsHandler is set without a metrics path")
 	}
 }

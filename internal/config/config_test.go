@@ -44,8 +44,11 @@ func writeKeys(t *testing.T) map[string]string {
 	}
 }
 
-func getenvFrom(env map[string]string) func(string) string {
-	return func(k string) string { return env[k] }
+func getenvFrom(env map[string]string) func(string) (string, bool) {
+	return func(k string) (string, bool) {
+		v, ok := env[k]
+		return v, ok
+	}
 }
 
 func withEnv(base map[string]string, extra map[string]string) map[string]string {
@@ -108,7 +111,6 @@ func TestLoadFromEnvironment(t *testing.T) {
 		"APP_LOG_LEVEL":              "debug",
 		"APP_SERVICE_NAME":           "orders",
 		"APP_OTEL_ENDPOINT":          "collector:4317",
-		"APP_METRICS_PATH":           "",
 		"APP_JWT_AUDIENCE":           "api",
 		"APP_JWT_TOKEN_TTL":          "15m",
 		"APP_JWT_DEV_TOKEN_ENDPOINT": "true",
@@ -138,13 +140,33 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.Observability.ServiceName != "orders" || cfg.Observability.OTLPEndpoint != "collector:4317" {
 		t.Errorf("observability = %+v", cfg.Observability)
 	}
-	// An empty environment value means "unset", so the default applies.
 	if cfg.Observability.MetricsPath != "/metrics" {
 		t.Errorf("metrics path = %q, want default /metrics", cfg.Observability.MetricsPath)
 	}
 	if cfg.JWT.Audience != "api" || cfg.JWT.TokenTTL != 15*time.Minute || !cfg.JWT.DevTokenEndpoint {
 		t.Errorf("jwt = audience %q ttl %v dev %v", cfg.JWT.Audience, cfg.JWT.TokenTTL, cfg.JWT.DevTokenEndpoint)
 	}
+}
+
+func TestLoadHonoursSetButEmptyEnvironment(t *testing.T) {
+	keys := writeKeys(t)
+
+	t.Run("set but empty overrides the default", func(t *testing.T) {
+		cfg, err := config.Load(nil, getenvFrom(withEnv(keys, map[string]string{"APP_METRICS_PATH": ""})))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Observability.MetricsPath != "" {
+			t.Errorf("metrics path = %q, want empty (metrics disabled)", cfg.Observability.MetricsPath)
+		}
+	})
+
+	t.Run("set but empty number is rejected", func(t *testing.T) {
+		_, err := config.Load(nil, getenvFrom(withEnv(keys, map[string]string{"APP_PORT": ""})))
+		if err == nil || !strings.Contains(err.Error(), "APP_PORT") {
+			t.Fatalf("Load() error = %v, want an error naming APP_PORT", err)
+		}
+	})
 }
 
 func TestLoadFlagOverridesEnvironment(t *testing.T) {

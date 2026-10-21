@@ -7,7 +7,6 @@ import (
 	"github.com/martinezsaweczko/go-api-template/internal/service"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/handlers"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
@@ -17,9 +16,8 @@ func (app *App) initHandlers() error {
 	var err error
 	// Initialize metrics handler
 	metricsHandlerConf := handlers.MetricsHandlerConfig{
-		Log:           app.log,
-		Observability: app.observability,
-		Cfg:           app.config,
+		Log: app.log,
+		Cfg: app.config,
 	}
 
 	app.handlers = &Handlers{}
@@ -35,9 +33,8 @@ func (app *App) initHandlers() error {
 
 	// Initialize swagger handler
 	swaggerHandlerConf := handlers.SwaggerHandlerConfig{
-		Log:           app.log,
-		Observability: app.observability,
-		Cfg:           app.config,
+		Log: app.log,
+		Cfg: app.config,
 	}
 	swaggerHandler := swaggerHandlerConf.NewSwaggerHandler()
 	app.handlers.swaggerHandler = swaggerHandler
@@ -117,9 +114,13 @@ func (app *App) registerRoutes() error {
 	// Create authorization middleware for protected endpoints
 	authorizationMiddleware := middleware.AuthorizationMiddleware(app.log, app.jwtService)
 
-	if metricsPath != "" {
+	switch {
+	case metricsPath == "":
+	case app.observability.MetricsHandler == nil:
+		app.log.Warn("Metrics path configured but no metrics handler provided; metrics endpoint disabled", "path", metricsPath)
+	default:
 		app.log.Info("Registering metrics handler", "path", metricsPath)
-		app.handlers.metricsHandler.RegisterRoutes(app.server, promhttp.Handler())
+		app.handlers.metricsHandler.RegisterRoutes(app.server, app.observability.MetricsHandler)
 	}
 
 	// Liveness, readiness and legacy health routes

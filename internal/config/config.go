@@ -4,7 +4,9 @@
 // Every flag has a matching environment variable: the flag name upper-cased,
 // with dashes replaced by underscores and the APP_ prefix added (for example
 // -jwt-token-ttl is APP_JWT_TOKEN_TTL). Precedence is flag > environment >
-// default. An empty environment variable counts as unset.
+// default. A variable that is set but empty is honoured, so APP_METRICS_PATH=
+// disables metrics; an empty value for a numeric, duration or boolean setting
+// is rejected as invalid. Unset the variable to keep the default.
 package config
 
 import (
@@ -97,17 +99,18 @@ func newFlagSet(cfg *Config) *flag.FlagSet {
 }
 
 // Load builds the configuration from defaults, then the environment read
-// through getenv, then args (typically os.Args[1:]), and validates it.
-// It returns flag.ErrHelp when help was requested.
-func Load(args []string, getenv func(string) string) (*Config, error) {
+// through lookupEnv (typically os.LookupEnv), then args (typically
+// os.Args[1:]), and validates it. It returns flag.ErrHelp when help was
+// requested.
+func Load(args []string, lookupEnv func(string) (string, bool)) (*Config, error) {
 	cfg := &Config{}
 	fs := newFlagSet(cfg)
 
 	var errs []error
 	fs.VisitAll(func(f *flag.Flag) {
 		name := EnvName(f.Name)
-		v := getenv(name)
-		if v == "" {
+		v, ok := lookupEnv(name)
+		if !ok {
 			return
 		}
 		if err := fs.Set(f.Name, v); err != nil {
@@ -160,7 +163,7 @@ func Usage(w io.Writer) {
 // splitList splits a comma-separated list, trimming spaces and dropping empty items.
 func splitList(v string) []string {
 	var out []string
-	for _, item := range strings.Split(v, ",") {
+	for item := range strings.SplitSeq(v, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			out = append(out, item)
 		}

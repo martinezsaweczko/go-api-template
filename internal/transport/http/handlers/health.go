@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -82,10 +81,10 @@ func (h *HealthHandler) readyz(w http.ResponseWriter, _ *http.Request) {
 	writeStatus(w, http.StatusOK, "ready")
 }
 
+// writeStatus writes a probe response. A failed write means the prober went
+// away, so there is nothing useful to log.
 func writeStatus(w http.ResponseWriter, code int, status string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(model.OKResponse{Status: status})
+	_ = writeJSON(w, code, model.OKResponse{Status: status})
 }
 
 // Get health status
@@ -106,9 +105,7 @@ func (h *HealthHandler) getHealth(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(healthInfo); err != nil {
-		h.log.ErrorContext(r.Context(), "Failed to encode health information", "error", err)
+	if err := writeJSON(w, http.StatusOK, healthInfo); err != nil {
+		h.log.ErrorContext(r.Context(), "Failed to send health information", "error", err)
 	}
 }

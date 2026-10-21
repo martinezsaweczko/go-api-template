@@ -5,46 +5,42 @@ import (
 	"net/http"
 
 	"github.com/martinezsaweczko/go-api-template/internal/config"
-	"github.com/martinezsaweczko/go-api-template/internal/observability"
 	"github.com/martinezsaweczko/go-api-template/internal/transport/http/middleware"
 )
 
 // Handler is an alias for http.Handler
 type Handler = http.Handler
 
-// Router defines the interface for registering routes
-
+// MetricsHandlerConfig holds dependencies for the metrics handler.
 type MetricsHandlerConfig struct {
-	Log           *slog.Logger
-	Observability *observability.ObservabilityInst
-	Cfg           *config.Config
+	Log *slog.Logger
+	Cfg *config.Config
 }
 
+// MetricsHandler registers the Prometheus scrape endpoint.
 type MetricsHandler struct {
-	log           *slog.Logger
-	observability *observability.ObservabilityInst
-	cfg           *config.Config
+	log *slog.Logger
+	cfg *config.Config
 }
 
 // NewMetricsHandler creates a new metrics handler
 func (m *MetricsHandlerConfig) NewMetricsHandler() *MetricsHandler {
-	// This is a wrapper to simplify imports in the app package
-	metricsHandler := &MetricsHandler{
-		log:           m.Log,
-		observability: m.Observability,
-		cfg:           m.Cfg,
+	return &MetricsHandler{
+		log: m.Log,
+		cfg: m.Cfg,
 	}
-	return metricsHandler
 }
 
-// Register the routes for the metrics handler
+// RegisterRoutes serves handler on the configured metrics path. Nothing is
+// registered when the metrics path is empty (metrics disabled).
 func (m *MetricsHandler) RegisterRoutes(router Router, handler http.Handler, middlewares ...middleware.Middleware) {
-	// Register the metrics handler route
-	if m.cfg.Observability.MetricsPath != "" {
-		if len(middlewares) > 0 {
-			router.HandleWithMiddleware(m.cfg.Observability.MetricsPath, handler, middlewares...)
-		} else {
-			router.Handle(m.cfg.Observability.MetricsPath, handler)
-		}
+	path := m.cfg.Observability.MetricsPath
+	if path == "" {
+		return
+	}
+	if len(middlewares) > 0 {
+		router.HandleWithMiddleware(path, handler, middlewares...)
+	} else {
+		router.Handle(path, handler)
 	}
 }
